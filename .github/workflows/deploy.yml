@@ -59,17 +59,21 @@ jobs:
             
             # Stop old containers
             echo "⛔ Stopping old containers..."
+            cd $DEPLOY_PATH
+            pwd
             docker compose down || true
             sleep 2
             
             # Build and start new containers
             echo "🐳 Building and starting containers..."
+            cd $DEPLOY_PATH
             docker compose pull
             docker compose build --no-cache
             docker compose up -d
             
             # Wait for services to be healthy
             echo "⏳ Waiting for services to start..."
+            cd $DEPLOY_PATH
             sleep 10
             
             # Health check
