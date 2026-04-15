@@ -352,10 +352,10 @@ async function runMigrations() {
   }
 }
 
-await runMigrations();
-
-// Auto-seed: seed database with sample data if empty
-await seedDatabase();
+// Run migrations and seed in background so server can start immediately
+runMigrations().then(() => seedDatabase()).catch(err =>
+  console.error('❌ Post-startup setup error:', err)
+);
 
 // Optional: run scraper in background if SCRAPER_ENABLED=true
 if (process.env.SCRAPER_ENABLED === 'true') {
