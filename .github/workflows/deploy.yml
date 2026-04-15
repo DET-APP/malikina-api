@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - dev
 
 jobs:
   deploy:
@@ -20,86 +19,50 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          timeout: 120s
+          command_timeout: 10m
           script: |
             set -e
-            
-            BRANCH="${{ github.ref_name }}"
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            
-            echo "================================"
-            echo "🚀 API Deployment"
-            echo "Branch: $BRANCH"
-            echo "Path: $DEPLOY_PATH"
-            echo "================================"
-            
-            # Create deploy directory if needed
-            mkdir -p $DEPLOY_PATH
-            
-            # Git operations
+            API_PATH="$DEPLOY_PATH/api"
             REPO_URL="https://github.com/DET-APP/malikina-api.git"
-            
-            if [ -d "$DEPLOY_PATH/.git" ]; then
-              echo "📦 Pulling latest changes..."
-              cd $DEPLOY_PATH
-              git config --global --add safe.directory $DEPLOY_PATH
+
+            echo "🚀 Deploying malikina-api to $API_PATH"
+
+            # Clone or pull API repo into api/ subfolder
+            if [ -d "$API_PATH/.git" ]; then
+              cd $API_PATH
+              git config --global --add safe.directory $API_PATH
               git remote set-url origin $REPO_URL
-              git fetch origin
-              git reset --hard HEAD
-              git clean -fd
-              git checkout $BRANCH
-              git reset --hard origin/$BRANCH
+              git fetch origin main
+              git reset --hard origin/main
             else
-              echo "🔄 Cloning repository..."
-              git clone -b $BRANCH $REPO_URL $DEPLOY_PATH
-              cd $DEPLOY_PATH
+              mkdir -p $API_PATH
+              git clone -b main $REPO_URL $API_PATH
             fi
-            
-            # Stop old containers
-            echo "⛔ Stopping old containers..."
+
+            # Copy nginx config from repo if exists
+            if [ -f "$API_PATH/nginx-docker.conf" ]; then
+              cp $API_PATH/nginx-docker.conf $DEPLOY_PATH/nginx-docker.conf
+            fi
+
+            # Rebuild and restart API container only
             cd $DEPLOY_PATH
-            docker compose down || true
-            sleep 2
-            
-            # Build and start new containers
-            echo "🐳 Building and starting containers..."
-            cd $DEPLOY_PATH
-            docker compose pull
-            docker compose build --no-cache
-            docker compose up -d
-            
-            # Wait for API to be ready (poll /health up to 90s)
-            echo "⏳ Waiting for API to be ready..."
-            cd $DEPLOY_PATH
-            HEALTHY=false
+            docker compose build --no-cache api
+            docker compose stop api
+            docker compose rm -f api
+            docker compose up -d api
+
+            # Poll /health until ready (up to 90s)
+            echo "⏳ Waiting for API..."
             for i in $(seq 1 30); do
               if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
-                echo "✅ API is healthy! (attempt $i)"
-                HEALTHY=true
+                echo "✅ API healthy after ${i}x3s"
                 break
               fi
-              echo "  ⏳ Waiting... ($i/30)"
               sleep 3
             done
-            
-            if [ "$HEALTHY" != "true" ]; then
-              echo "❌ API did not become healthy in time"
-              docker compose logs api
-              exit 1
-            fi
-            
-            # Database stats
-            echo "📊 Database stats:"
-            docker exec malikina-db psql -U malikina -d malikina -c "
-              SELECT 
-                'Xassidas' as item, COUNT(*) as count FROM xassidas
-              UNION ALL
-              SELECT 'Authors', COUNT(*) FROM authors
-              UNION ALL
-              SELECT 'Verses', COUNT(*) FROM verses;
-            " 2>/dev/null || echo "Could not fetch stats"
-            
-            echo "================================"
-            echo "✅ Deployment successful!"
-            echo "API: https://165-245-211-201.sslip.io/api"
-            echo "================================"
+
+            # Final check
+            curl -sf http://localhost:5000/health || (docker compose logs api --tail 30 && exit 1)
+
+            echo "✅ Deployment done! API: https://165-245-211-201.sslip.io/api"
