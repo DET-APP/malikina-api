@@ -39,7 +39,7 @@ jobs:
             mkdir -p $DEPLOY_PATH
             
             # Git operations
-            REPO_URL="https://github.com/Sangoule/malikina-api.git"
+            REPO_URL="https://github.com/DET-APP/malikina-api.git"
             
             if [ -d "$DEPLOY_PATH/.git" ]; then
               echo "📦 Pulling latest changes..."
@@ -53,7 +53,7 @@ jobs:
               git reset --hard origin/$BRANCH
             else
               echo "🔄 Cloning repository..."
-              git clone -b $BRANCH https://github.com/Sangoule/malikina-api.git $DEPLOY_PATH
+              git clone -b $BRANCH $REPO_URL $DEPLOY_PATH
               cd $DEPLOY_PATH
             fi
             
