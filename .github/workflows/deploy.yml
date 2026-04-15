@@ -45,8 +45,10 @@ jobs:
               cd $DEPLOY_PATH
               git config --global --add safe.directory $DEPLOY_PATH
               git fetch origin
+              git reset --hard HEAD
+              git clean -fd
               git checkout $BRANCH
-              git pull origin $BRANCH --force
+              git reset --hard origin/$BRANCH
             else
               echo "🔄 Cloning repository..."
               git clone -b $BRANCH $REPO_URL $DEPLOY_PATH
