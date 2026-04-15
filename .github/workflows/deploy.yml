@@ -6,10 +6,6 @@ on:
       - main
       - dev
 
-env:
-  DROPLET_IP: 165.245.211.201
-  DEPLOY_PATH: /var/www/malikina-api
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -20,34 +16,82 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy to server
+      - name: Deploy to server via SSH
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ env.DROPLET_IP }}
-          username: root
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
           script: |
             set -e
             
-            # Variables
             BRANCH="${{ github.ref_name }}"
-            DEPLOY_PATH="${{ env.DEPLOY_PATH }}"
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            REPO_URL="https://github.com/${{ github.repository }}.git"
             
-            echo "Deploying branch: $BRANCH"
+            echo "================================"
+            echo "🚀 API Deployment"
+            echo "Branch: $BRANCH"
+            echo "Path: $DEPLOY_PATH"
+            echo "================================"
             
-            # Create deploy directory if it doesn't exist
+            # Create deploy directory if needed
             mkdir -p $DEPLOY_PATH
             
-            # Clone or pull repository
+            # Git operations
             if [ -d "$DEPLOY_PATH/.git" ]; then
-              echo "Pulling latest changes..."
+              echo "📦 Pulling latest changes..."
               cd $DEPLOY_PATH
               git fetch origin
               git checkout $BRANCH
-              git pull origin $BRANCH
+              git pull origin $BRANCH --force
             else
-              echo "Cloning repository..."
-              git clone -b $BRANCH https://github.com/${{ github.repository }}.git $DEPLOY_PATH
+              echo "🔄 Cloning repository..."
+              git clone -b $BRANCH $REPO_URL $DEPLOY_PATH
+              cd $DEPLOY_PATH
+            fi
+            
+            # Stop old containers
+            echo "⛔ Stopping old containers..."
+            docker-compose down || true
+            sleep 2
+            
+            # Build and start new containers
+            echo "🐳 Building and starting containers..."
+            docker-compose pull
+            docker-compose build --no-cache
+            docker-compose up -d
+            
+            # Wait for services to be healthy
+            echo "⏳ Waiting for services to start..."
+            sleep 10
+            
+            # Health check
+            echo "🏥 Health check..."
+            if curl -f http://localhost:5000/api/xassidas?limit=1 > /dev/null 2>&1; then
+              echo "✅ API is healthy!"
+            else
+              echo "❌ API health check failed"
+              docker-compose logs api
+              exit 1
+            fi
+            
+            # Database stats
+            echo "📊 Database stats:"
+            docker exec malikina-db psql -U malikina -d malikina -c "
+              SELECT 
+                'Xassidas' as item, COUNT(*) as count FROM xassidas
+              UNION ALL
+              SELECT 'Authors', COUNT(*) FROM authors
+              UNION ALL
+              SELECT 'Verses', COUNT(*) FROM verses;
+            " 2>/dev/null || echo "Could not fetch stats"
+            
+            echo "================================"
+            echo "✅ Deployment successful!"
+            echo "API: https://165-245-211-201.sslip.io/api"
+            echo "================================"
               cd $DEPLOY_PATH
             fi
             
