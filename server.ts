@@ -352,10 +352,9 @@ async function runMigrations() {
   }
 }
 
-// Run migrations and seed in background so server can start immediately
-runMigrations().then(() => seedDatabase()).catch(err =>
-  console.error('❌ Post-startup setup error:', err)
-);
+// Run migrations then seed before accepting requests
+await runMigrations();
+await seedDatabase();
 
 // Optional: run scraper in background if SCRAPER_ENABLED=true
 if (process.env.SCRAPER_ENABLED === 'true') {
