@@ -28,7 +28,6 @@ jobs:
             
             BRANCH="${{ github.ref_name }}"
             DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            REPO_URL="https://github.com/${{ github.repository }}.git"
             
             echo "================================"
             echo "🚀 API Deployment"
@@ -40,10 +39,13 @@ jobs:
             mkdir -p $DEPLOY_PATH
             
             # Git operations
+            REPO_URL="https://github.com/Sangoule/malikina-api.git"
+            
             if [ -d "$DEPLOY_PATH/.git" ]; then
               echo "📦 Pulling latest changes..."
               cd $DEPLOY_PATH
               git config --global --add safe.directory $DEPLOY_PATH
+              git remote set-url origin $REPO_URL
               git fetch origin
               git reset --hard HEAD
               git clean -fd
@@ -51,7 +53,7 @@ jobs:
               git reset --hard origin/$BRANCH
             else
               echo "🔄 Cloning repository..."
-              git clone -b $BRANCH $REPO_URL $DEPLOY_PATH
+              git clone -b $BRANCH https://github.com/Sangoule/malikina-api.git $DEPLOY_PATH
               cd $DEPLOY_PATH
             fi
             
