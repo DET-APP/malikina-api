@@ -43,6 +43,7 @@ jobs:
             if [ -d "$DEPLOY_PATH/.git" ]; then
               echo "📦 Pulling latest changes..."
               cd $DEPLOY_PATH
+              git config --global --add safe.directory $DEPLOY_PATH
               git fetch origin
               git checkout $BRANCH
               git pull origin $BRANCH --force
