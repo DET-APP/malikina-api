@@ -20,7 +20,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          timeout: 60s
+          timeout: 120s
           script: |
             set -e
             
@@ -58,7 +58,6 @@ jobs:
             # Stop old containers
             echo "⛔ Stopping old containers..."
             cd $DEPLOY_PATH
-            pwd
             docker compose down || true
             sleep 2
             
@@ -69,17 +68,22 @@ jobs:
             docker compose build --no-cache
             docker compose up -d
             
-            # Wait for services to be healthy
-            echo "⏳ Waiting for services to start..."
+            # Wait for API to be ready (poll /health up to 90s)
+            echo "⏳ Waiting for API to be ready..."
             cd $DEPLOY_PATH
-            sleep 10
+            HEALTHY=false
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+                echo "✅ API is healthy! (attempt $i)"
+                HEALTHY=true
+                break
+              fi
+              echo "  ⏳ Waiting... ($i/30)"
+              sleep 3
+            done
             
-            # Health check
-            echo "🏥 Health check..."
-            if curl -f http://localhost:5000/api/xassidas?limit=1 > /dev/null 2>&1; then
-              echo "✅ API is healthy!"
-            else
-              echo "❌ API health check failed"
+            if [ "$HEALTHY" != "true" ]; then
+              echo "❌ API did not become healthy in time"
               docker compose logs api
               exit 1
             fi
