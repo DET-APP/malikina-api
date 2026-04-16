@@ -159,7 +159,27 @@ export async function initDatabase() {
         )
       `);
 
+      // Xassida Audios table (for multiple audio versions per xassida)
+      database.run(`
+        CREATE TABLE IF NOT EXISTS xassida_audios (
+          id TEXT PRIMARY KEY,
+          xassida_id TEXT NOT NULL,
+          chapter_number INTEGER,
+          reciter_name TEXT NOT NULL,
+          youtube_id TEXT,
+          audio_url TEXT,
+          label TEXT,
+          order_index INTEGER DEFAULT 0,
+          start_time INTEGER DEFAULT 0,
+          end_time INTEGER,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (xassida_id) REFERENCES xassidas(id)
+        )
+      `);
+
       database.run(`CREATE INDEX IF NOT EXISTS idx_verses_xassida ON verses(xassida_id)`);
+      database.run(`CREATE INDEX IF NOT EXISTS idx_xassida_audios_xassida ON xassida_audios(xassida_id)`);
       database.run(`CREATE INDEX IF NOT EXISTS idx_xassidas_author ON xassidas(author_id)`, (err) => {
         if (err) {
           reject(err);
