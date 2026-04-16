@@ -119,15 +119,19 @@ router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Check if any xassidas use this category
+    // Check if any xassidas use this category (by name match)
+    const catRow = await pool.query(`SELECT name FROM categories WHERE id = $1`, [id]);
+    if (catRow.rows.length === 0) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
     const checkResult = await pool.query(`
-      SELECT COUNT(*) as count FROM xassidas WHERE categorie_id = $1
-    `, [id]);
+      SELECT COUNT(*) as count FROM xassidas WHERE categorie = $1
+    `, [catRow.rows[0].name]);
 
-    if (checkResult.rows[0]?.count > 0) {
-      return res.status(400).json({ 
+    if (parseInt(checkResult.rows[0]?.count) > 0) {
+      return res.status(400).json({
         error: 'Cannot delete category in use by xassidas',
-        count: checkResult.rows[0].count 
+        count: parseInt(checkResult.rows[0].count)
       });
     }
 

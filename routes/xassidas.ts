@@ -245,6 +245,93 @@ router.get('/admin/stats', async (req: Request, res: Response) => {
   }
 });
 
+// ── Audio CRUD ───────────────────────────────────────────────────────────────
+
+// GET all audios for a xassida
+router.get('/:id/audios', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `SELECT id, xassida_id, chapter_number, reciter_name, youtube_id, audio_url, label, order_index, created_at
+       FROM xassida_audios
+       WHERE xassida_id = $1
+       ORDER BY order_index ASC, chapter_number ASC NULLS FIRST, created_at ASC`,
+      [id]
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    console.error('Error fetching xassida audios:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST add audio to a xassida
+router.post('/:id/audios', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reciter_name, chapter_number, youtube_url, audio_url, label, order_index } = req.body;
+
+    if (!reciter_name || !reciter_name.trim()) {
+      return res.status(400).json({ error: 'reciter_name is required' });
+    }
+
+    // Extract youtube_id from various YouTube URL formats
+    let youtube_id: string | null = null;
+    if (youtube_url && youtube_url.trim()) {
+      try {
+        const url = new URL(youtube_url.trim());
+        if (url.hostname === 'youtu.be') youtube_id = url.pathname.slice(1);
+        else if (url.hostname.includes('youtube.com')) youtube_id = url.searchParams.get('v');
+      } catch {
+        if (/^[a-zA-Z0-9_-]{11}$/.test(youtube_url.trim())) youtube_id = youtube_url.trim();
+      }
+    }
+
+    const finalAudioUrl = audio_url?.trim() || null;
+
+    if (!youtube_id && !finalAudioUrl) {
+      return res.status(400).json({ error: 'Either youtube_url or audio_url is required' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO xassida_audios (xassida_id, chapter_number, reciter_name, youtube_id, audio_url, label, order_index)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        id,
+        chapter_number != null && chapter_number !== '' ? Number(chapter_number) : null,
+        reciter_name.trim(),
+        youtube_id,
+        finalAudioUrl,
+        label?.trim() || null,
+        order_index ?? 0
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error: any) {
+    console.error('Error adding xassida audio:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE audio
+router.delete('/:id/audios/:audioId', async (req: Request, res: Response) => {
+  try {
+    const { audioId } = req.params;
+    const result = await pool.query(
+      'DELETE FROM xassida_audios WHERE id = $1 RETURNING id',
+      [audioId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Audio not found' });
+    }
+    res.json({ message: 'Audio deleted', id: audioId });
+  } catch (error: any) {
+    console.error('Error deleting audio:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET single xassida with verses
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -295,11 +382,21 @@ router.get('/:id', async (req: Request, res: Response) => {
       ORDER BY chapter_number ASC, verse_number ASC
     `, [id]);
 
+    // Get audios (multiple reciters / per-chapter)
+    const audiosResult = await pool.query(
+      `SELECT id, xassida_id, chapter_number, reciter_name, youtube_id, audio_url, label, order_index
+       FROM xassida_audios
+       WHERE xassida_id = $1
+       ORDER BY order_index ASC, chapter_number ASC NULLS FIRST, created_at ASC`,
+      [id]
+    );
+
     const xassida = xassidaResult.rows[0];
     res.json({
       ...xassida,
       verses: versesResult.rows,
-      verse_count: versesResult.rows.length
+      verse_count: versesResult.rows.length,
+      audios: audiosResult.rows
     });
   } catch (error: any) {
     console.error('Error fetching xassida:', error);
