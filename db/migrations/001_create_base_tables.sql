@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS verses (
   id SERIAL PRIMARY KEY,
   xassida_id INTEGER NOT NULL REFERENCES xassidas(id) ON DELETE CASCADE,
   verse_number INTEGER NOT NULL,
-  content TEXT NOT NULL,
+  content TEXT,
   content_ar TEXT,
   translation_fr TEXT,
   translation_en TEXT,
@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS verses (
   notes TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  chapter_number INTEGER,
+  verse_key VARCHAR(50),
+  text_arabic TEXT,
+  transcription TEXT,
+  words JSONB,
   FOREIGN KEY (xassida_id) REFERENCES xassidas(id) ON DELETE CASCADE
 );
 
