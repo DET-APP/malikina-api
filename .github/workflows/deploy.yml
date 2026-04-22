@@ -50,18 +50,19 @@ jobs:
             docker compose -f docker-compose.deploy.yml up -d api
             echo "✓ Container started"
 
-            # ── 4. Wait for API to be ready ────────────
+            # ── 4. Wait for API to be ready (HTTP check) ─
             for i in $(seq 1 20); do
-              STATUS=$(docker inspect --format='{{.State.Health.Status}}' malikina-api 2>/dev/null || echo "starting")
-              if [ "$STATUS" = "healthy" ]; then
-                echo "✓ API healthy (attempt $i)"
+              HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health 2>/dev/null || echo "000")
+              if [ "$HTTP" = "200" ]; then
+                echo "✓ API ready (attempt $i, HTTP $HTTP)"
                 break
               fi
               if [ $i -eq 20 ]; then
-                echo "✗ API timeout — logs:"
+                echo "✗ API timeout (last HTTP: $HTTP) — logs:"
                 docker logs malikina-api --tail 30
                 exit 1
               fi
+              echo "  Waiting... attempt $i (HTTP $HTTP)"
               sleep 3
             done
 
