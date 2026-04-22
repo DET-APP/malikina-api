@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { pool } from '../db/config.js';
 import { extractFromPdf } from '../lib/pdf-extractor.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -24,11 +25,13 @@ async function ensureAudioDir() {
   }
 }
 
-// GET all xassidas
+// GET all xassidas — public filtre is_visible, admin voit tout
 router.get('/', async (req: Request, res: Response) => {
   try {
+    const showAll = req.query.admin === 'true';
+    const visibilityFilter = showAll ? '' : 'WHERE x.is_visible = true';
     const result = await pool.query(`
-      SELECT 
+      SELECT
         x.id::text,
         x.title,
         x.description,
@@ -37,12 +40,14 @@ router.get('/', async (req: Request, res: Response) => {
         COALESCE(x.youtube_id, '') as youtube_id,
         COALESCE(x.categorie, 'Autre') as categorie,
         COALESCE(x.verse_count, 0) as verse_count,
+        COALESCE(x.is_visible, true) as is_visible,
         (SELECT COUNT(*) FROM verses WHERE xassida_id = x.id) as actual_verse_count,
         x.created_at,
         a.id::text as author_id,
         a.name as author_name
-      FROM xassidas x 
+      FROM xassidas x
       LEFT JOIN authors a ON x.author_id = a.id
+      ${visibilityFilter}
       ORDER BY x.created_at DESC
     `);
     res.json(result.rows);
@@ -53,7 +58,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ADMIN: Import/Update translations for verses (MUST BE BEFORE /:id)
-router.post('/admin/import-translations', async (req: Request, res: Response) => {
+router.post('/admin/import-translations', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     // Support both formats:
     // 1. { translations: [...], xassida_id: "..." }
@@ -130,7 +135,7 @@ router.post('/admin/import-translations', async (req: Request, res: Response) =>
 });
 
 // POST admin: Re-scrape all xassidas
-router.post('/admin/rescrape', async (req: Request, res: Response) => {
+router.post('/admin/rescrape', requireAuth, requireRole('SuperAdmin', 'Admin'), async (req: Request, res: Response) => {
   try {
     // Check if scraper is already running
     const result = await pool.query(`SELECT COUNT(*) FROM information_schema.processlist WHERE info LIKE '%scrape%'`).catch(() => ({ rows: [{ count: 0 }] }));
@@ -168,7 +173,7 @@ router.post('/admin/rescrape', async (req: Request, res: Response) => {
 });
 
 // GET admin: Check data integrity
-router.get('/admin/integrity-check', async (req: Request, res: Response) => {
+router.get('/admin/integrity-check', requireAuth, requireRole('SuperAdmin', 'Admin', 'Moderateur'), async (req: Request, res: Response) => {
   try {
     const result = await pool.query(`
       SELECT 
@@ -208,7 +213,7 @@ router.get('/admin/integrity-check', async (req: Request, res: Response) => {
 });
 
 // GET admin: List categories
-router.get('/admin/categories', async (_req: Request, res: Response) => {
+router.get('/admin/categories', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida', 'Moderateur'), async (_req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT categorie FROM xassidas WHERE categorie IS NOT NULL ORDER BY categorie ASC`
@@ -224,7 +229,7 @@ router.get('/admin/categories', async (_req: Request, res: Response) => {
 });
 
 // GET admin: Data statistics
-router.get('/admin/stats', async (req: Request, res: Response) => {
+router.get('/admin/stats', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida', 'GerantAudio', 'Moderateur'), async (req: Request, res: Response) => {
   try {
     const result = await pool.query(`
       SELECT 
@@ -266,7 +271,7 @@ router.get('/:id/audios', async (req: Request, res: Response) => {
 });
 
 // POST add audio to a xassida
-router.post('/:id/audios', async (req: Request, res: Response) => {
+router.post('/:id/audios', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { reciter_name, chapter_number, youtube_url, audio_url, label, order_index, start_time, end_time } = req.body;
@@ -323,7 +328,7 @@ router.post('/:id/audios', async (req: Request, res: Response) => {
 });
 
 // PUT update audio
-router.put('/:id/audios/:audioId', async (req: Request, res: Response) => {
+router.put('/:id/audios/:audioId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     const { audioId } = req.params;
     const { reciter_name, chapter_number, youtube_url, audio_url, label, order_index, start_time, end_time } = req.body;
@@ -372,7 +377,7 @@ router.put('/:id/audios/:audioId', async (req: Request, res: Response) => {
 });
 
 // DELETE audio
-router.delete('/:id/audios/:audioId', async (req: Request, res: Response) => {
+router.delete('/:id/audios/:audioId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio'), async (req: Request, res: Response) => {
   try {
     const { audioId } = req.params;
     const result = await pool.query(
@@ -492,7 +497,7 @@ router.get('/:id/verses', async (req: Request, res: Response) => {
 });
 
 // CREATE xassida
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     const { title, author_id, description, audio_url, arabic_name, categorie } = req.body;
 
@@ -515,7 +520,7 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // UPDATE xassida
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { title, description, author_id, audio_url, arabic_name, categorie } = req.body;
@@ -544,7 +549,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 // DELETE xassida
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requireAuth, requireRole('SuperAdmin', 'Admin'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -565,8 +570,27 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// PATCH visibility toggle
+router.patch('/:id/visibility', requireAuth, requireRole('SuperAdmin', 'Admin'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { is_visible } = req.body;
+    if (typeof is_visible !== 'boolean') {
+      return res.status(400).json({ error: 'is_visible (boolean) requis' });
+    }
+    const result = await pool.query(
+      'UPDATE xassidas SET is_visible = $1 WHERE id = $2 RETURNING id, title, is_visible',
+      [is_visible, id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Xassida non trouvée' });
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // SET youtube ID from URL
-router.post('/:id/set-youtube-id', async (req: Request, res: Response) => {
+router.post('/:id/set-youtube-id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida', 'GerantAudio'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { youtube_url } = req.body;
@@ -612,7 +636,7 @@ router.post('/:id/set-youtube-id', async (req: Request, res: Response) => {
 });
 
 // UPLOAD audio for xassida
-router.post('/:id/upload-audio', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/:id/upload-audio', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
@@ -653,7 +677,7 @@ router.post('/:id/upload-audio', upload.single('file'), async (req: Request, res
 });
 
 // UPLOAD PDF and extract verses
-router.post('/:id/upload-pdf', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/:id/upload-pdf', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), upload.single('file'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -683,7 +707,7 @@ router.post('/:id/upload-pdf', upload.single('file'), async (req: Request, res: 
 });
 
 // POST verses for a xassida (create or replace)
-router.post('/:id/verses', async (req: Request, res: Response) => {
+router.post('/:id/verses', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { verses, replaceExisting } = req.body;

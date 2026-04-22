@@ -8,6 +8,7 @@ import { pool } from './db/config.js';
 import { xassidaRoutes } from './routes/xassidas.js';
 import { authorRoutes } from './routes/authors.js';
 import categoriesRoutes from './routes/categories.js';
+import { authRoutes } from './routes/auth.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -336,6 +337,7 @@ if (process.env.SCRAPER_ENABLED === 'true') {
 }
 
 // Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/xassidas', xassidaRoutes);
 app.use('/api/authors', authorRoutes);
 app.use('/api/categories', categoriesRoutes);
