@@ -1,15 +1,15 @@
 /**
  * Scraper Xassidas → PostgreSQL
  * Récupère les xassidas 111→165 depuis l'API xassida.sn
- * et les importe dans PostgreSQL
+ * et les importe dans PostgreSQL, avec traductions FR/EN
  */
 
 import { query } from '../db/config.js';
 
 const START_ID = 111;
 const END_ID = 165;
-const DELAY_MS = 300; // Increased from 200ms
-const API_TIMEOUT_MS = 15000; // 15 second timeout per request
+const DELAY_MS = 300;
+const API_TIMEOUT_MS = 15000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
@@ -47,6 +47,11 @@ interface RemoteChapter {
   xassida_id: number;
 }
 
+interface RemoteTranslation {
+  lang: string;
+  text: string;
+}
+
 interface RemoteVerse {
   id: number;
   number: number;
@@ -54,6 +59,7 @@ interface RemoteVerse {
   text: string;
   transcription: string;
   chapter_id: number;
+  verse_translation: RemoteTranslation[];
 }
 
 function slugToTitle(slug: string): string {
@@ -69,35 +75,35 @@ function sleep(ms: number) {
 
 async function supabaseGet<T>(path: string): Promise<T[]> {
   let lastError: Error | null = null;
-  
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const url = `${SUPABASE_URL}/rest/v1/${path}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
-      
-      const res = await fetch(url, { 
+
+      const res = await fetch(url, {
         headers: HEADERS,
-        signal: controller.signal 
+        signal: controller.signal
       });
       clearTimeout(timeoutId);
-      
+
       if (!res.ok) {
         throw new Error(`Supabase ${res.status}: ${path}`);
       }
-      
+
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     } catch (error) {
       lastError = error as Error;
       console.error(`   ⚠️  Attempt ${attempt}/${MAX_RETRIES} failed: ${lastError.message}`);
-      
+
       if (attempt < MAX_RETRIES) {
-        await sleep(RETRY_DELAY_MS * attempt); // Exponential backoff
+        await sleep(RETRY_DELAY_MS * attempt);
       }
     }
   }
-  
+
   throw new Error(`Failed to fetch ${path} after ${MAX_RETRIES} attempts: ${lastError?.message}`);
 }
 
@@ -108,13 +114,9 @@ async function upsertAuthor(remote: RemoteAuthor): Promise<number> {
     ? `${SUPABASE_URL}/storage/v1/object/public/images/${remote.picture}`
     : null;
 
-  // Check if exists
   const existing = await query('SELECT id FROM authors WHERE name = $1', [name]);
-  if (existing.rows.length > 0) {
-    return existing.rows[0].id;
-  }
+  if (existing.rows.length > 0) return existing.rows[0].id;
 
-  // Insert
   const result = await query(
     'INSERT INTO authors (name, full_name, tradition, photo_url) VALUES ($1, $2, $3, $4) RETURNING id',
     [name, name, tradition, photoUrl]
@@ -129,13 +131,9 @@ async function upsertXassida(
 ): Promise<{ id: number; inserted: boolean }> {
   const title = slugToTitle(remote.name);
 
-  // Check if exists
   const existing = await query('SELECT id FROM xassidas WHERE title = $1', [title]);
-  if (existing.rows.length > 0) {
-    return { id: existing.rows[0].id, inserted: false };
-  }
+  if (existing.rows.length > 0) return { id: existing.rows[0].id, inserted: false };
 
-  // Insert
   const result = await query(
     'INSERT INTO xassidas (title, author_id, verse_count) VALUES ($1, $2, $3) RETURNING id',
     [title, authorId, verseCount]
@@ -143,27 +141,45 @@ async function upsertXassida(
   return { id: result.rows[0].id, inserted: true };
 }
 
-async function insertVerses(
+async function upsertVerses(
   xassidaId: number,
   chapterNumber: number,
   verses: RemoteVerse[]
-): Promise<number> {
-  let count = 0;
-  for (const verse of verses) {
-    // Build verse key: chapter:verse_number
-    const verseKey = `${chapterNumber}:${verse.number}`;
+): Promise<{ inserted: number; translated: number }> {
+  let inserted = 0;
+  let translated = 0;
 
-    // Check if exists (use verse_key which includes chapter number)
+  for (const verse of verses) {
+    const verseKey = `${chapterNumber}:${verse.number}`;
+    const frTr = verse.verse_translation?.find(t => t.lang === 'fr')?.text || null;
+    const enTr = verse.verse_translation?.find(t => t.lang === 'en')?.text || null;
+
     const existing = await query(
-      'SELECT id FROM verses WHERE xassida_id = $1 AND verse_key = $2',
+      'SELECT id, translation_fr, translation_en FROM verses WHERE xassida_id = $1 AND verse_key = $2',
       [xassidaId, verseKey]
     );
-    if (existing.rows.length > 0) continue;
+
+    if (existing.rows.length > 0) {
+      // Update translations if missing
+      if ((frTr && !existing.rows[0].translation_fr) || (enTr && !existing.rows[0].translation_en)) {
+        await query(
+          `UPDATE verses
+           SET translation_fr = COALESCE(translation_fr, $1),
+               translation_en = COALESCE(translation_en, $2),
+               updated_at = NOW()
+           WHERE id = $3`,
+          [frTr, enTr, existing.rows[0].id]
+        );
+        translated++;
+      }
+      continue;
+    }
 
     await query(
-      `INSERT INTO verses 
-        (xassida_id, verse_number, chapter_number, verse_key, text_arabic, transcription, content, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+      `INSERT INTO verses
+        (xassida_id, verse_number, chapter_number, verse_key, text_arabic, transcription, content,
+         translation_fr, translation_en, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
       [
         xassidaId,
         verse.number,
@@ -171,12 +187,16 @@ async function insertVerses(
         verseKey,
         verse.text,
         verse.transcription || null,
-        verse.text
+        verse.text,
+        frTr,
+        enTr,
       ]
     );
-    count++;
+    inserted++;
+    if (frTr || enTr) translated++;
   }
-  return count;
+
+  return { inserted, translated };
 }
 
 async function main() {
@@ -187,31 +207,24 @@ async function main() {
       `xassida?id=gte.${START_ID}&id=lte.${END_ID}&select=id,name,slug,author_id,author(id,name,tariha,picture)&order=id`
     );
 
-    let insertedX = 0, skippedX = 0, failedX = 0, totalVerses = 0;
+    let insertedX = 0, skippedX = 0, failedX = 0, totalVerses = 0, totalTranslated = 0;
     const errors: { name: string; error: string }[] = [];
 
     for (const xassida of xassidas) {
       const title = slugToTitle(xassida.name);
 
       try {
-        if (!xassida.author) {
-          failedX++;
-          continue;
-        }
+        if (!xassida.author) { failedX++; continue; }
 
         const authorId = await upsertAuthor(xassida.author);
 
-        // Fetch chapters - tolerate failures
         let chapters: RemoteChapter[] = [];
         try {
           chapters = await supabaseGet<RemoteChapter>(
             `chapter?xassida_id=eq.${xassida.id}&select=id,number,name&order=number`
           );
-        } catch (err) {
-          // Continue anyway - xassida may exist without chapters in API
-        }
+        } catch (err) { /* continue without chapters */ }
 
-        // Upsert xassida (work even with 0 chapters)
         const { id: xassidaId, inserted } = await upsertXassida(
           xassida,
           authorId,
@@ -219,28 +232,24 @@ async function main() {
         );
 
         let versesThisX = 0;
+        let translatedThisX = 0;
 
-        // Fetch and insert verses from all chapters
         for (const chapter of chapters) {
           try {
             const verses = await supabaseGet<RemoteVerse>(
-              `verse?chapter_id=eq.${chapter.id}&select=id,number,key,text,transcription&order=number`
+              `verse?chapter_id=eq.${chapter.id}&select=id,number,key,text,transcription,verse_translation(lang,text)&order=number`
             );
-            versesThisX += await insertVerses(xassidaId, chapter.number, verses);
-          } catch (err) {
-            // Skip failed chapters, continue with others
-          }
+            const result = await upsertVerses(xassidaId, chapter.number, verses);
+            versesThisX += result.inserted;
+            translatedThisX += result.translated;
+          } catch (err) { /* skip failed chapters */ }
           await sleep(50);
         }
 
-        if (inserted) {
-          console.log(`[${xassida.id}] ${versesThisX} verses`);
-          insertedX++;
-        } else {
-          skippedX++;
-        }
-
+        console.log(`[${xassida.id}] ${title} — ${versesThisX} verses, ${translatedThisX} translated`);
+        if (inserted) insertedX++; else skippedX++;
         totalVerses += versesThisX;
+        totalTranslated += translatedThisX;
       } catch (err) {
         errors.push({ name: title, error: (err as Error).message });
         failedX++;
@@ -250,7 +259,8 @@ async function main() {
     }
 
     console.log('');
-    console.log(`✅ ${insertedX} imported | ⏭️  ${skippedX} existing | ❌ ${failedX} failed | 📜 ${totalVerses} verses`);
+    console.log(`✅ ${insertedX} imported | ⏭️  ${skippedX} existing | ❌ ${failedX} failed`);
+    console.log(`📜 ${totalVerses} verses inserted | 🌐 ${totalTranslated} translations added`);
 
     process.exit(errors.length > 0 && failedX > 5 ? 1 : 0);
   } catch (error) {
