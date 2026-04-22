@@ -123,18 +123,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create triggers for updated_at
+-- Create triggers for updated_at (idempotent)
+DROP TRIGGER IF EXISTS update_authors_updated_at ON authors;
 CREATE TRIGGER update_authors_updated_at BEFORE UPDATE ON authors
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_xassidas_updated_at ON xassidas;
 CREATE TRIGGER update_xassidas_updated_at BEFORE UPDATE ON xassidas
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_verses_updated_at ON verses;
 CREATE TRIGGER update_verses_updated_at BEFORE UPDATE ON verses
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_translations_updated_at ON translations;
 CREATE TRIGGER update_translations_updated_at BEFORE UPDATE ON translations
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_prayer_times_updated_at ON prayer_times;
 CREATE TRIGGER update_prayer_times_updated_at BEFORE UPDATE ON prayer_times
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
