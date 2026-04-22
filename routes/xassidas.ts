@@ -75,7 +75,7 @@ router.post('/admin/import-translations', requireAuth, requireRole('SuperAdmin',
 
     for (const trans of translations) {
       try {
-        const { verse_id, verse_number, translation_fr, translation_en, transcription } = trans;
+        const { verse_id, verse_number, translation_fr, translation_en, translation_wo, transcription } = trans;
         const transXassidaId = trans.xassida_id || xassida_id;
 
         let finalVerseId = verse_id;
@@ -103,14 +103,15 @@ router.post('/admin/import-translations', requireAuth, requireRole('SuperAdmin',
 
         const result = await pool.query(`
           UPDATE verses
-          SET 
+          SET
             translation_fr = COALESCE($1, translation_fr),
             translation_en = COALESCE($2, translation_en),
-            transcription = COALESCE($3, transcription),
+            translation_wo = COALESCE($3, translation_wo),
+            transcription = COALESCE($4, transcription),
             updated_at = NOW()
-          WHERE id = $4
+          WHERE id = $5
           RETURNING id
-        `, [translation_fr || null, translation_en || null, transcription || null, finalVerseId]);
+        `, [translation_fr || null, translation_en || null, translation_wo || null, transcription || null, finalVerseId]);
 
         if (result.rows.length > 0) {
           updated++;
@@ -426,15 +427,16 @@ router.get('/:id', async (req: Request, res: Response) => {
     // Get verses
     const versesResult = await pool.query(`
       SELECT 
-        id, 
-        xassida_id, 
-        chapter_number, 
-        verse_number, 
+        id,
+        xassida_id,
+        chapter_number,
+        verse_number,
         verse_key,
         text_arabic,
         transcription,
         translation_fr,
         translation_en,
+        translation_wo,
         words,
         audio_url,
         created_at,
