@@ -3,131 +3,86 @@ name: Deploy API to Production
 on:
   push:
     branches:
-      - main
       - dev
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy to server via SSH
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          timeout: 60s
+          timeout: 300s
           script: |
             set -e
-            
             BRANCH="${{ github.ref_name }}"
-            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
-            REPO_URL="https://github.com/${{ github.repository }}.git"
-            
-            echo "================================"
-            echo "🚀 API Deployment"
-            echo "Branch: $BRANCH"
-            echo "Path: $DEPLOY_PATH"
-            echo "================================"
-            
-            # Create deploy directory if needed
-            mkdir -p $DEPLOY_PATH
-            
-            # Git operations
-            if [ -d "$DEPLOY_PATH/.git" ]; then
-              echo "📦 Pulling latest changes..."
-              cd $DEPLOY_PATH
-              git fetch origin
-              git checkout $BRANCH
-              git pull origin $BRANCH --force
+            GH_TOKEN="${{ secrets.GH_TOKEN }}"
+            REPO="DET-APP/malikina-api"
+
+            echo "========================================"
+            echo "  API Deployment — branch: $BRANCH"
+            echo "========================================"
+
+            # ── 1. Update source code ─────────────────
+            if [ -d /root/malikina-api/.git ]; then
+              cd /root/malikina-api
+              git fetch "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" "$BRANCH:$BRANCH"
+              git reset --hard "$BRANCH"
             else
-              echo "🔄 Cloning repository..."
-              git clone -b $BRANCH $REPO_URL $DEPLOY_PATH
-              cd $DEPLOY_PATH
+              git clone -b "$BRANCH" "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" /root/malikina-api
             fi
-            
-            # Stop old containers
-            echo "⛔ Stopping old containers..."
-            docker-compose down || true
-            sleep 2
-            
-            # Build and start new containers
-            echo "🐳 Building and starting containers..."
-            docker-compose pull
-            docker-compose build --no-cache
-            docker-compose up -d
-            
-            # Wait for services to be healthy
-            echo "⏳ Waiting for services to start..."
-            sleep 10
-            
-            # Health check
-            echo "🏥 Health check..."
-            if curl -f http://localhost:5000/api/xassidas?limit=1 > /dev/null 2>&1; then
-              echo "✅ API is healthy!"
-            else
-              echo "❌ API health check failed"
-              docker-compose logs api
-              exit 1
-            fi
-            
-            # Database stats
-            echo "📊 Database stats:"
-            docker exec malikina-db psql -U malikina -d malikina -c "
-              SELECT 
-                'Xassidas' as item, COUNT(*) as count FROM xassidas
-              UNION ALL
-              SELECT 'Authors', COUNT(*) FROM authors
-              UNION ALL
-              SELECT 'Verses', COUNT(*) FROM verses;
-            " 2>/dev/null || echo "Could not fetch stats"
-            
-            echo "================================"
+            cd /root/malikina-api
+            echo "✓ Code: $(git log --oneline -1)"
+
+            # ── 2. Build Docker image ──────────────────
+            docker build -t malikina-api:latest . 2>&1 | tail -5
+            echo "✓ Image built"
+
+            # ── 3. Restart API container ───────────────
+            docker stop malikina-api 2>/dev/null || true
+            docker rm   malikina-api 2>/dev/null || true
+            cd /root/malikina
+            docker compose -f docker-compose.deploy.yml up -d api
+            echo "✓ Container started"
+
+            # ── 4. Wait for API to be ready ────────────
+            for i in $(seq 1 20); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' malikina-api 2>/dev/null || echo "starting")
+              if [ "$STATUS" = "healthy" ]; then
+                echo "✓ API healthy (attempt $i)"
+                break
+              fi
+              if [ $i -eq 20 ]; then
+                echo "✗ API timeout — logs:"
+                docker logs malikina-api --tail 30
+                exit 1
+              fi
+              sleep 3
+            done
+
+            # ── 5. Apply migrations (idempotent) ───────
+            DB_USER=$(docker exec malikina-api printenv DB_USER 2>/dev/null || echo "malikina")
+            DB_NAME=$(docker exec malikina-api printenv DB_NAME 2>/dev/null || echo "malikina")
+            echo "Applying migrations..."
+            for sql in /root/malikina-api/db/migrations/*.sql; do
+              fname=$(basename "$sql")
+              if docker exec -i malikina-db psql -U "$DB_USER" -d "$DB_NAME" < "$sql" 2>/dev/null; then
+                echo "  ✓ $fname"
+              else
+                echo "  ~ $fname (skipped/already applied)"
+              fi
+            done
+
+            # ── 6. Verify ──────────────────────────────
+            COUNT=$(docker exec malikina-db psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT COUNT(*) FROM xassidas" 2>/dev/null || echo "?")
+            echo ""
+            echo "========================================"
             echo "✅ Deployment successful!"
-            echo "API: https://165-245-211-201.sslip.io/api"
-            echo "================================"
-              cd $DEPLOY_PATH
-            fi
-            
-            # Load environment variables from .deploy-secrets
-            if [ -f /root/.deploy-secrets/.env.api ]; then
-              export $(cat /root/.deploy-secrets/.env.api | xargs)
-            fi
-            
-            # Create .env from environment variables
-            cat > $DEPLOY_PATH/.env << EOF
-            PORT=5000
-            NODE_ENV=production
-            DB_HOST=$DB_HOST
-            DB_PORT=$DB_PORT
-            DB_USER=$DB_USER
-            DB_PASSWORD=$DB_PASSWORD
-            DB_NAME=$DB_NAME
-            FRONTEND_URL=$FRONTEND_URL
-            OCR_SPACE_API_KEY=$OCR_SPACE_API_KEY
-            ADMIN_SECRET=$ADMIN_SECRET
-            EOF
-            
-            # Stop existing containers
-            echo "Stopping existing containers..."
-            docker-compose -f $DEPLOY_PATH/docker-compose.yml down || true
-            
-            # Build and start containers
-            echo "Building and starting containers..."
-            docker-compose -f $DEPLOY_PATH/docker-compose.yml build
-            docker-compose -f $DEPLOY_PATH/docker-compose.yml up -d
-            
-            # Wait for API to be ready
-            echo "Waiting for API to be ready..."
-            sleep 10
-            
-            # Health check
-            curl -f http://localhost:5000/ || exit 1
-            
-            echo "✅ Deployment successful!"
+            echo "   Xassidas in DB : $COUNT"
+            echo "   API : https://165-245-211-201.sslip.io/api"
+            echo "========================================"
