@@ -8,13 +8,15 @@ import { spawn } from 'child_process';
 import { pool } from '../db/config.js';
 import { extractFromPdf } from '../lib/pdf-extractor.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { uploadToSpaces, deleteFromSpaces, keyFromUrl } from '../lib/spaces.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } }); // 200 MB max
 
-// Audio upload directory
+// Audio upload directory (fallback local si Spaces non configuré)
 const audioDir = path.join(__dirname, '../public/audios');
+const SPACES_ENABLED = !!(process.env.SPACES_ACCESS_KEY && process.env.SPACES_SECRET_KEY);
 
 // Ensure audio directory exists
 async function ensureAudioDir() {
@@ -637,41 +639,35 @@ router.post('/:id/set-youtube-id', requireAuth, requireRole('SuperAdmin', 'Admin
   }
 });
 
-// UPLOAD audio for xassida
+// UPLOAD audio for xassida → DigitalOcean Spaces (ou local en fallback)
 router.post('/:id/upload-audio', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), upload.single('file'), async (req: Request, res: Response) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file provided' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-    // Validate file type
     const allowedMimes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4'];
     if (!allowedMimes.includes(req.file.mimetype)) {
-      return res.status(400).json({ error: 'Invalid audio format. Allowed: MP3, WAV, OGG, WebM, M4A' });
+      return res.status(400).json({ error: 'Format invalide. Autorisés : MP3, WAV, OGG, WebM, M4A' });
     }
 
-    // Create filename
-    const ext = req.file.mimetype === 'audio/mpeg' ? 'mp3' : 
-               req.file.mimetype === 'audio/wav' ? 'wav' : 
-               req.file.mimetype === 'audio/ogg' ? 'ogg' : 
-               req.file.mimetype === 'audio/webm' ? 'webm' : 'm4a';
+    const ext = req.file.mimetype === 'audio/mpeg' ? 'mp3'
+              : req.file.mimetype === 'audio/wav'  ? 'wav'
+              : req.file.mimetype === 'audio/ogg'  ? 'ogg'
+              : req.file.mimetype === 'audio/webm' ? 'webm' : 'm4a';
     const filename = `${req.params.id}-${Date.now()}.${ext}`;
-    const filePath = path.join(audioDir, filename);
 
-    // Ensure directory exists
-    await ensureAudioDir();
+    let audioUrl: string;
 
-    // Save file
-    await fs.writeFile(filePath, req.file.buffer);
+    if (SPACES_ENABLED) {
+      const key = `audios/${filename}`;
+      audioUrl = await uploadToSpaces(req.file.buffer, key, req.file.mimetype);
+    } else {
+      // Fallback local
+      await ensureAudioDir();
+      await fs.writeFile(path.join(audioDir, filename), req.file.buffer);
+      audioUrl = `/audios/${filename}`;
+    }
 
-    // Generate audio URL (relative to public directory)
-    const audioUrl = `/audios/${filename}`;
-
-    res.json({
-      message: 'Audio uploaded successfully',
-      audioUrl,
-      filename
-    });
+    res.json({ message: 'Audio uploadé avec succès', audioUrl, filename, storage: SPACES_ENABLED ? 'spaces' : 'local' });
   } catch (error: any) {
     console.error('Audio upload error:', error);
     res.status(500).json({ error: error.message });
