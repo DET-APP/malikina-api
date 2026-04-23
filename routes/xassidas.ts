@@ -735,8 +735,8 @@ router.post('/:id/verses', requireAuth, requireRole('SuperAdmin', 'Admin', 'Gera
         const verseKey = `${chapterNum}:${verseNum}`;
 
         await pool.query(`
-          INSERT INTO verses (xassida_id, verse_number, chapter_number, verse_key, text_arabic, transcription, translation_fr, translation_en, content, created_at, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+          INSERT INTO verses (xassida_id, verse_number, chapter_number, verse_key, text_arabic, transcription, translation_fr, translation_en, translation_wo, content, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
         `, [
           id,
           verseNum,
@@ -746,6 +746,7 @@ router.post('/:id/verses', requireAuth, requireRole('SuperAdmin', 'Admin', 'Gera
           verse.transcription || null,
           verse.translation_fr || null,
           verse.translation_en || null,
+          verse.translation_wo || null,
           verse.text_arabic || '',
         ]);
         inserted++;
