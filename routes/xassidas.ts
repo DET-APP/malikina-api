@@ -27,11 +27,19 @@ async function ensureAudioDir() {
   }
 }
 
-// GET all xassidas — public filtre is_visible, admin voit tout
+// GET all xassidas — public filtre is_visible, admin voit tout, ?fiqh=true pour livres Fiqh
 router.get('/', async (req: Request, res: Response) => {
   try {
     const showAll = req.query.admin === 'true';
-    const visibilityFilter = showAll ? '' : 'WHERE x.is_visible = true';
+    const fiqhOnly = req.query.fiqh === 'true';
+
+    const conditions: string[] = [];
+    if (!showAll) conditions.push('x.is_visible = true');
+    // By default, exclude fiqh books from the xassidas list unless ?fiqh=true
+    if (!showAll && !fiqhOnly) conditions.push('(x.is_fiqh IS NULL OR x.is_fiqh = false)');
+    if (fiqhOnly) conditions.push('x.is_fiqh = true');
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
     const result = await pool.query(`
       SELECT
         x.id::text,
@@ -43,13 +51,14 @@ router.get('/', async (req: Request, res: Response) => {
         COALESCE(x.categorie, 'Autre') as categorie,
         COALESCE(x.verse_count, 0) as verse_count,
         COALESCE(x.is_visible, true) as is_visible,
+        COALESCE(x.is_fiqh, false) as is_fiqh,
         (SELECT COUNT(*) FROM verses WHERE xassida_id = x.id) as actual_verse_count,
         x.created_at,
         a.id::text as author_id,
         a.name as author_name
       FROM xassidas x
       LEFT JOIN authors a ON x.author_id = a.id
-      ${visibilityFilter}
+      ${whereClause}
       ORDER BY x.created_at DESC
     `);
     res.json(result.rows);
@@ -503,7 +512,7 @@ router.get('/:id/verses', async (req: Request, res: Response) => {
 // CREATE xassida
 router.post('/', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
-    const { title, author_id, description, audio_url, arabic_name, categorie } = req.body;
+    const { title, author_id, description, audio_url, arabic_name, categorie, is_fiqh } = req.body;
 
     if (!title || !author_id) {
       return res.status(400).json({ error: 'title and author_id are required' });
@@ -511,10 +520,10 @@ router.post('/', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'
 
     const id = uuid();
     const result = await pool.query(`
-      INSERT INTO xassidas (id, title, author_id, description, audio_url, arabic_name, categorie, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-      RETURNING id, title, description, audio_url, arabic_name, categorie, created_at, author_id
-    `, [id, title, author_id, description || null, audio_url || null, arabic_name || null, categorie || 'Autre']);
+      INSERT INTO xassidas (id, title, author_id, description, audio_url, arabic_name, categorie, is_fiqh, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      RETURNING id, title, description, audio_url, arabic_name, categorie, is_fiqh, created_at, author_id
+    `, [id, title, author_id, description || null, audio_url || null, arabic_name || null, categorie || 'Autre', is_fiqh || false]);
 
     res.status(201).json(result.rows[0]);
   } catch (error: any) {
@@ -527,7 +536,7 @@ router.post('/', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'
 router.put('/:id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { title, description, author_id, audio_url, arabic_name, categorie } = req.body;
+    const { title, description, author_id, audio_url, arabic_name, categorie, is_fiqh } = req.body;
 
     const result = await pool.query(`
       UPDATE xassidas
@@ -536,10 +545,11 @@ router.put('/:id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassid
           author_id = COALESCE($3, author_id),
           audio_url = COALESCE($4, audio_url),
           arabic_name = COALESCE($5, arabic_name),
-          categorie = COALESCE($6, categorie)
+          categorie = COALESCE($6, categorie),
+          is_fiqh = CASE WHEN $8::boolean IS NOT NULL THEN $8 ELSE is_fiqh END
       WHERE id = $7
-      RETURNING id, title, description, audio_url, arabic_name, categorie, youtube_id, created_at, author_id
-    `, [title || null, description || null, author_id || null, audio_url || null, arabic_name || null, categorie || null, id]);
+      RETURNING id, title, description, audio_url, arabic_name, categorie, is_fiqh, youtube_id, created_at, author_id
+    `, [title || null, description || null, author_id || null, audio_url || null, arabic_name || null, categorie || null, id, is_fiqh ?? null]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Xassida not found' });
