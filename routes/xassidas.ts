@@ -518,12 +518,11 @@ router.post('/', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'
       return res.status(400).json({ error: 'title and author_id are required' });
     }
 
-    const id = uuid();
     const result = await pool.query(`
-      INSERT INTO xassidas (id, title, author_id, description, audio_url, arabic_name, categorie, is_fiqh, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      INSERT INTO xassidas (title, author_id, description, audio_url, arabic_name, categorie, is_fiqh, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
       RETURNING id, title, description, audio_url, arabic_name, categorie, is_fiqh, created_at, author_id
-    `, [id, title, author_id, description || null, audio_url || null, arabic_name || null, categorie || 'Autre', is_fiqh || false]);
+    `, [title, author_id, description || null, audio_url || null, arabic_name || null, categorie || 'Autre', is_fiqh || false]);
 
     res.status(201).json(result.rows[0]);
   } catch (error: any) {

@@ -61,12 +61,11 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Name is required' });
     }
 
-    const id = uuid();
     const result = await pool.query(
-      `INSERT INTO authors (id, name, description, photo_url, birth_year, death_year, tradition)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO authors (name, description, photo_url, birth_year, death_year, tradition)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, name, description, photo_url, birth_year, death_year, tradition`,
-      [id, name, description || null, photo_url || null, birth_year || null, death_year || null, tradition || null]
+      [name, description || null, photo_url || null, birth_year || null, death_year || null, tradition || null]
     );
 
     res.status(201).json(result.rows[0]);
