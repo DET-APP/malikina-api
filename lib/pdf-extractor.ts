@@ -5,11 +5,10 @@
  * Identifies: author, introductory text (basmalah, dedications), and verses.
  */
 
-// pdf-parse ships as CJS; dynamic import works with tsx + ESM
-async function loadPdfParse() {
-  const mod = await import('pdf-parse');
-  return (mod as any).default ?? mod;
-}
+// pdf-parse v1 ships as CJS; use createRequire for reliable interop
+import { createRequire } from 'module';
+const _require = createRequire(import.meta.url);
+const pdfParse: (buffer: Buffer) => Promise<{ text: string; numpages: number; info: any }> = _require('pdf-parse');
 
 // ── Arabic text utilities ───────────────────────────────────────────────────
 
@@ -100,7 +99,6 @@ export interface ExtractionResult {
  * Returns structured verses and detected metadata.
  */
 export async function extractFromPdf(buffer: Buffer): Promise<ExtractionResult> {
-  const pdfParse = await loadPdfParse();
   const parsed = await pdfParse(buffer);
 
   const rawText: string = parsed.text || '';
