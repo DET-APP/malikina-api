@@ -119,4 +119,22 @@ router.patch('/users/:id/password', requireAuth, async (req: Request, res: Respo
   }
 });
 
+// DELETE /api/auth/users/:id — SuperAdmin uniquement, pas soi-même
+router.delete('/users/:id', requireAuth, requireRole('SuperAdmin'), async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (req.admin!.id === id) {
+    return res.status(400).json({ error: 'Impossible de supprimer votre propre compte' });
+  }
+  try {
+    const result = await pool.query(
+      'DELETE FROM admin_users WHERE id = $1 RETURNING id, email, full_name',
+      [id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    res.json({ message: 'Utilisateur supprimé', user: result.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export { router as authRoutes };
