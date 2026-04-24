@@ -1,16 +1,14 @@
 import { Router, Request, Response } from 'express';
-import { v4 as uuid } from 'uuid';
 import multer from 'multer';
 import path from 'path';
 import { promises as fs } from 'fs';
-import { fileURLToPath } from 'url';
 import { pool } from '../db/config.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-const photosDir = path.join(__dirname, '../public/photos');
+// process.cwd() = /app in container — avoids __dirname issues with dist/ layout
+const photosDir = path.join(process.cwd(), 'public/photos');
 
 async function ensurePhotosDir() {
   try {

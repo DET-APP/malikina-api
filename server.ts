@@ -301,9 +301,9 @@ app.use(cors({
 app.use(EXPRESS.json({ limit: '50mb' }));
 app.use(EXPRESS.urlencoded({ limit: '50mb', extended: true }));
 
-// Serve static files
-app.use('/audios', EXPRESS.static(path.join(__dirname, 'public/audios')));
-app.use('/photos', EXPRESS.static(path.join(__dirname, 'public/photos')));
+// Serve static files — process.cwd() = /app in container, correct regardless of dist/ layout
+app.use('/audios', EXPRESS.static(path.join(process.cwd(), 'public/audios')));
+app.use('/photos', EXPRESS.static(path.join(process.cwd(), 'public/photos')));
 
 // Initialize PostgreSQL
 console.log('⏳ Connecting to PostgreSQL database...');

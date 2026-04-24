@@ -23,25 +23,25 @@ WORKDIR /app
 # Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
 
-# Copy package files
+# Copy node_modules from builder (avoids recompiling native modules on Alpine)
+COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
-
-# Install production dependencies only
-RUN npm install --production --legacy-peer-deps --no-audit
 
 # Copy built code from builder
 COPY --from=builder /app/dist ./dist
 COPY public ./public
 
-# Create non-root user for security
+# Create non-root user and ensure public dirs are writable by nodejs
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+    adduser -S nodejs -u 1001 && \
+    mkdir -p public/photos public/audios && \
+    chown -R nodejs:nodejs public/
 
 USER nodejs
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 5000) + '/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 5000) + '/api/xassidas', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
