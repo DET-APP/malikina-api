@@ -483,16 +483,17 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.get('/:id/verses', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(`
-      SELECT 
-        id, 
-        xassida_id, 
-        chapter_number, 
-        verse_number, 
+      SELECT
+        id,
+        xassida_id,
+        chapter_number,
+        verse_number,
         verse_key,
         text_arabic,
         transcription,
         translation_fr,
         translation_en,
+        translation_wo,
         words,
         audio_url,
         notes,
@@ -505,6 +506,67 @@ router.get('/:id/verses', async (req: Request, res: Response) => {
     res.json(result.rows);
   } catch (error: any) {
     console.error('Error fetching verses:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT update a single verse
+router.put('/:id/verses/:verseId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
+  try {
+    const { verseId } = req.params;
+    const { text_arabic, transcription, translation_fr, translation_en, translation_wo, audio_url, verse_number, chapter_number } = req.body;
+
+    const result = await pool.query(`
+      UPDATE verses SET
+        text_arabic    = COALESCE($1, text_arabic),
+        transcription  = COALESCE($2, transcription),
+        translation_fr = COALESCE($3, translation_fr),
+        translation_en = COALESCE($4, translation_en),
+        translation_wo = COALESCE($5, translation_wo),
+        audio_url      = COALESCE($6, audio_url),
+        verse_number   = COALESCE($7, verse_number),
+        chapter_number = COALESCE($8, chapter_number),
+        content        = COALESCE($1, text_arabic),
+        updated_at     = NOW()
+      WHERE id = $9
+      RETURNING id, xassida_id, chapter_number, verse_number, text_arabic, transcription, translation_fr, translation_en, translation_wo, audio_url, updated_at
+    `, [
+      text_arabic || null,
+      transcription || null,
+      translation_fr || null,
+      translation_en || null,
+      translation_wo || null,
+      audio_url || null,
+      verse_number ?? null,
+      chapter_number ?? null,
+      verseId,
+    ]);
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Verse not found' });
+    res.json(result.rows[0]);
+  } catch (error: any) {
+    console.error('Error updating verse:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE a single verse
+router.delete('/:id/verses/:verseId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
+  try {
+    const { id, verseId } = req.params;
+    const result = await pool.query(
+      'DELETE FROM verses WHERE id = $1 AND xassida_id = $2 RETURNING id',
+      [verseId, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Verse not found' });
+
+    // Update verse_count
+    const countResult = await pool.query('SELECT COUNT(*) as count FROM verses WHERE xassida_id = $1', [id]);
+    await pool.query('UPDATE xassidas SET verse_count = $1 WHERE id = $2', [countResult.rows[0].count, id]);
+
+    res.json({ message: 'Verse deleted', id: verseId });
+  } catch (error: any) {
+    console.error('Error deleting verse:', error);
     res.status(500).json({ error: error.message });
   }
 });

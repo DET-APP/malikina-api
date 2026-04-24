@@ -147,7 +147,9 @@ router.post('/:id/upload-photo', upload.single('photo'), async (req: Request, re
     await ensurePhotosDir();
     await fs.writeFile(filePath, req.file.buffer);
 
-    const photoUrl = `/photos/${filename}`;
+    const proto = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    const photoUrl = `${proto}://${host}/photos/${filename}`;
 
     // Update author's photo_url in database
     await pool.query('UPDATE authors SET photo_url = $1 WHERE id = $2', [photoUrl, req.params.id]);
