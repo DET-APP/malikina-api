@@ -660,6 +660,8 @@ router.put('/:id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassid
     const { id } = req.params;
     const { title, description, author_id, audio_url, arabic_name, categorie, is_fiqh, chapters_json } = req.body;
 
+    const chaptersJsonStr = chapters_json != null ? JSON.stringify(chapters_json) : null;
+
     const result = await pool.query(`
       UPDATE xassidas
       SET title = COALESCE($1, title),
@@ -668,11 +670,11 @@ router.put('/:id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassid
           audio_url = COALESCE($4, audio_url),
           arabic_name = COALESCE($5, arabic_name),
           categorie = COALESCE($6, categorie),
-          is_fiqh = CASE WHEN $8::boolean IS NOT NULL THEN $8 ELSE is_fiqh END,
-          chapters_json = CASE WHEN $9 IS NOT NULL THEN $9::jsonb ELSE chapters_json END
+          is_fiqh = CASE WHEN $8::text IS NOT NULL THEN ($8::text)::boolean ELSE is_fiqh END,
+          chapters_json = CASE WHEN $9::text IS NOT NULL THEN ($9::text)::jsonb ELSE chapters_json END
       WHERE id = $7
       RETURNING id, title, description, audio_url, arabic_name, categorie, is_fiqh, chapters_json, youtube_id, created_at, author_id
-    `, [title || null, description || null, author_id || null, audio_url || null, arabic_name || null, categorie || null, id, is_fiqh ?? null, chapters_json || null]);
+    `, [title || null, description || null, author_id || null, audio_url || null, arabic_name || null, categorie || null, id, is_fiqh != null ? String(is_fiqh) : null, chaptersJsonStr]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Xassida not found' });
