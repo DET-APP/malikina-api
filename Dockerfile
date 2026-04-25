@@ -20,8 +20,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# Install dumb-init, ffmpeg and yt-dlp for YouTube audio download
+RUN apk add --no-cache dumb-init python3 ffmpeg curl && \
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
 # Copy node_modules from builder (avoids recompiling native modules on Alpine)
 COPY --from=builder /app/node_modules ./node_modules

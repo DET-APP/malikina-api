@@ -340,6 +340,65 @@ router.post('/:id/audios', requireAuth, requireRole('SuperAdmin', 'Admin', 'Gera
   }
 });
 
+// POST download YouTube audio → DigitalOcean Spaces
+router.post('/:id/audios/:audioId/download-to-spaces', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), async (req: Request, res: Response) => {
+  const { id, audioId } = req.params;
+  try {
+    // Get the audio record
+    const audioResult = await pool.query(
+      'SELECT id, xassida_id, youtube_id, audio_url FROM xassida_audios WHERE id = $1 AND xassida_id = $2',
+      [audioId, id]
+    );
+    if (audioResult.rows.length === 0) return res.status(404).json({ error: 'Audio introuvable' });
+
+    const audio = audioResult.rows[0];
+    if (!audio.youtube_id) return res.status(400).json({ error: 'Cet audio n\'a pas de YouTube ID' });
+
+    const youtubeUrl = `https://www.youtube.com/watch?v=${audio.youtube_id}`;
+
+    // Stream yt-dlp output directly into memory (no temp file)
+    const audioBuffer: Buffer = await new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const ytdlp = spawn('yt-dlp', [
+        '-x',
+        '--audio-format', 'mp3',
+        '--audio-quality', '5',
+        '--no-playlist',
+        '-o', '-',          // output to stdout
+        youtubeUrl,
+      ]);
+      ytdlp.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+      ytdlp.stderr.on('data', (d: Buffer) => console.log('[yt-dlp]', d.toString()));
+      ytdlp.on('close', (code) => {
+        if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
+        resolve(Buffer.concat(chunks));
+      });
+      ytdlp.on('error', reject);
+    });
+
+    // Upload to Spaces
+    const key = `audios/xassida-${id}-audio-${audioId}-${Date.now()}.mp3`;
+    const spacesUrl = await uploadToSpaces(audioBuffer, key, 'audio/mpeg');
+
+    // Delete old Spaces file if replacing
+    if (audio.audio_url) {
+      const oldKey = keyFromUrl(audio.audio_url);
+      if (oldKey) await deleteFromSpaces(oldKey).catch(() => {});
+    }
+
+    // Update DB
+    await pool.query(
+      'UPDATE xassida_audios SET audio_url = $1, youtube_id = youtube_id WHERE id = $2',
+      [spacesUrl, audioId]
+    );
+
+    res.json({ audio_url: spacesUrl, message: 'Audio stocké sur Spaces' });
+  } catch (error: any) {
+    console.error('Error downloading audio to Spaces:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // PUT update audio
 router.put('/:id/audios/:audioId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
