@@ -1,22 +1,10 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
-import path from 'path';
-import { promises as fs } from 'fs';
 import { pool } from '../db/config.js';
+import { uploadToSpaces, deleteFromSpaces, keyFromUrl } from '../lib/spaces.js';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
-
-// process.cwd() = /app in container — avoids __dirname issues with dist/ layout
-const photosDir = path.join(process.cwd(), 'public/photos');
-
-async function ensurePhotosDir() {
-  try {
-    await fs.mkdir(photosDir, { recursive: true });
-  } catch (error) {
-    console.error('Error creating photos directory:', error);
-  }
-}
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // GET all authors
 router.get('/', async (req: Request, res: Response) => {
@@ -128,33 +116,31 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// UPLOAD photo for author
+// UPLOAD photo for author → DigitalOcean Spaces (persists across Docker rebuilds)
 router.post('/:id/upload-photo', upload.single('photo'), async (req: Request, res: Response) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file provided' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
     const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
     if (!allowedMimes.includes(req.file.mimetype)) {
-      return res.status(400).json({ error: 'Invalid image format. Allowed: JPG, PNG, WebP, GIF' });
+      return res.status(400).json({ error: 'Invalid format. Allowed: JPG, PNG, WebP, GIF' });
     }
 
-    const ext = req.file.mimetype.split('/')[1] === 'jpeg' ? 'jpg' : req.file.mimetype.split('/')[1];
-    const filename = `${req.params.id}-${Date.now()}.${ext}`;
-    const filePath = path.join(photosDir, filename);
+    // Delete old photo from Spaces if it was already there
+    const existing = await pool.query('SELECT photo_url FROM authors WHERE id = $1', [req.params.id]);
+    const oldUrl = existing.rows[0]?.photo_url;
+    if (oldUrl) {
+      const oldKey = keyFromUrl(oldUrl);
+      if (oldKey) await deleteFromSpaces(oldKey).catch(() => {});
+    }
 
-    await ensurePhotosDir();
-    await fs.writeFile(filePath, req.file.buffer);
+    const ext = req.file.mimetype === 'image/jpeg' ? 'jpg' : req.file.mimetype.split('/')[1];
+    const key = `photos/author-${req.params.id}-${Date.now()}.${ext}`;
+    const photoUrl = await uploadToSpaces(req.file.buffer, key, req.file.mimetype);
 
-    const proto = req.get('x-forwarded-proto') || req.protocol;
-    const host = req.get('host');
-    const photoUrl = `${proto}://${host}/photos/${filename}`;
-
-    // Update author's photo_url in database
     await pool.query('UPDATE authors SET photo_url = $1 WHERE id = $2', [photoUrl, req.params.id]);
 
-    res.json({ message: 'Photo uploaded successfully', photo_url: photoUrl, filename });
+    res.json({ photo_url: photoUrl });
   } catch (error: any) {
     console.error('Photo upload error:', error);
     res.status(500).json({ error: error.message });
