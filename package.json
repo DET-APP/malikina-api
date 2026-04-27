@@ -11,7 +11,8 @@
     "db:migrate": "tsx db/migrate.ts",
     "db:seed": "tsx db/seed.ts",
     "scrape": "node dist/scripts/scrape-xassidas-pg.js",
-    "scrape:complete": "tsx scripts/scrape-xassidas-complete.ts"
+    "scrape:complete": "tsx scripts/scrape-xassidas-complete.ts",
+    "migrate:photos": "tsx scripts/migrate-photos-to-spaces.ts"
   },
   "dependencies": {
     "@distube/ytdl": "^2.0.6",
@@ -24,6 +25,8 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/uuid": "^9.0.7",
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/lib-storage": "^3.600.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
