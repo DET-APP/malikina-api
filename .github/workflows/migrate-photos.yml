@@ -16,6 +16,8 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 120s
           script: |
-            echo "Running photo migration inside container..."
-            docker exec malikina-api node dist/scripts/migrate-photos-to-spaces.js
+            echo "=== Files in dist/scripts/ ==="
+            docker exec malikina-api ls dist/scripts/ 2>/dev/null || echo "(directory not found)"
+            echo "=== Running migration with tsx ==="
+            docker exec malikina-api node_modules/.bin/tsx scripts/migrate-photos-to-spaces.ts
             echo "Done."
