@@ -1,0 +1,21 @@
+name: Migrate Author Photos to Spaces
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run photo migration via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 120s
+          script: |
+            echo "Running photo migration inside container..."
+            docker exec malikina-api node dist/scripts/migrate-photos-to-spaces.js
+            echo "Done."
