@@ -31,7 +31,7 @@ jobs:
             # ── 1. Update source code ─────────────────
             if [ -d /root/malikina-api/.git ]; then
               cd /root/malikina-api
-              git fetch "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" "$BRANCH:$BRANCH"
+              git fetch "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" "+$BRANCH:$BRANCH"
               git reset --hard "$BRANCH"
             else
               git clone -b "$BRANCH" "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" /root/malikina-api
@@ -66,16 +66,25 @@ jobs:
               sleep 3
             done
 
-            # ── 5. Apply migrations (idempotent) ───────
+            # ── 5. Apply migrations (tracked — run each file only once) ──
             DB_USER=$(docker exec malikina-api printenv DB_USER 2>/dev/null || echo "malikina")
             DB_NAME=$(docker exec malikina-api printenv DB_NAME 2>/dev/null || echo "malikina")
             echo "Applying migrations..."
+            # Ensure tracking table exists
+            docker exec -i malikina-db psql -U "$DB_USER" -d "$DB_NAME" -c \
+              "CREATE TABLE IF NOT EXISTS _migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMP DEFAULT NOW());" 2>/dev/null
             for sql in /root/malikina-api/db/migrations/*.sql; do
               fname=$(basename "$sql")
-              if docker exec -i malikina-db psql -U "$DB_USER" -d "$DB_NAME" < "$sql" 2>/dev/null; then
+              already=$(docker exec malikina-db psql -U "$DB_USER" -d "$DB_NAME" -tAc \
+                "SELECT COUNT(*) FROM _migrations WHERE filename='$fname'" 2>/dev/null || echo "0")
+              if [ "$already" = "1" ]; then
+                echo "  ⏭️  $fname (already applied)"
+              elif docker exec -i malikina-db psql -U "$DB_USER" -d "$DB_NAME" < "$sql" 2>/dev/null; then
+                docker exec malikina-db psql -U "$DB_USER" -d "$DB_NAME" -c \
+                  "INSERT INTO _migrations(filename) VALUES('$fname') ON CONFLICT DO NOTHING;" 2>/dev/null
                 echo "  ✓ $fname"
               else
-                echo "  ~ $fname (skipped/already applied)"
+                echo "  ✗ $fname (failed)"
               fi
             done
 
