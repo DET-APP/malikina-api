@@ -8,13 +8,15 @@ import { spawn } from 'child_process';
 import { pool } from '../db/config.js';
 import { extractFromPdf } from '../lib/pdf-extractor.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { uploadToSpaces, deleteFromSpaces, keyFromUrl } from '../lib/spaces.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } }); // 200 MB max
 
-// Audio upload directory
+// Audio upload directory (fallback local si Spaces non configuré)
 const audioDir = path.join(__dirname, '../public/audios');
+const SPACES_ENABLED = !!(process.env.SPACES_ACCESS_KEY && process.env.SPACES_SECRET_KEY);
 
 // Ensure audio directory exists
 async function ensureAudioDir() {
@@ -25,11 +27,19 @@ async function ensureAudioDir() {
   }
 }
 
-// GET all xassidas — public filtre is_visible, admin voit tout
+// GET all xassidas — public filtre is_visible, admin voit tout, ?fiqh=true pour livres Fiqh
 router.get('/', async (req: Request, res: Response) => {
   try {
     const showAll = req.query.admin === 'true';
-    const visibilityFilter = showAll ? '' : 'WHERE x.is_visible = true';
+    const fiqhOnly = req.query.fiqh === 'true';
+
+    const conditions: string[] = [];
+    if (!showAll) conditions.push('x.is_visible = true');
+    // By default, exclude fiqh books from the xassidas list unless ?fiqh=true
+    if (!showAll && !fiqhOnly) conditions.push('(x.is_fiqh IS NULL OR x.is_fiqh = false)');
+    if (fiqhOnly) conditions.push('x.is_fiqh = true');
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
     const result = await pool.query(`
       SELECT
         x.id::text,
@@ -41,13 +51,15 @@ router.get('/', async (req: Request, res: Response) => {
         COALESCE(x.categorie, 'Autre') as categorie,
         COALESCE(x.verse_count, 0) as verse_count,
         COALESCE(x.is_visible, true) as is_visible,
+        COALESCE(x.is_fiqh, false) as is_fiqh,
+        COALESCE(x.chapters_json, '{}') as chapters_json,
         (SELECT COUNT(*) FROM verses WHERE xassida_id = x.id) as actual_verse_count,
         x.created_at,
         a.id::text as author_id,
         a.name as author_name
       FROM xassidas x
       LEFT JOIN authors a ON x.author_id = a.id
-      ${visibilityFilter}
+      ${whereClause}
       ORDER BY x.created_at DESC
     `);
     res.json(result.rows);
@@ -75,7 +87,7 @@ router.post('/admin/import-translations', requireAuth, requireRole('SuperAdmin',
 
     for (const trans of translations) {
       try {
-        const { verse_id, verse_number, translation_fr, translation_en, transcription } = trans;
+        const { verse_id, verse_number, translation_fr, translation_en, translation_wo, transcription } = trans;
         const transXassidaId = trans.xassida_id || xassida_id;
 
         let finalVerseId = verse_id;
@@ -103,14 +115,15 @@ router.post('/admin/import-translations', requireAuth, requireRole('SuperAdmin',
 
         const result = await pool.query(`
           UPDATE verses
-          SET 
+          SET
             translation_fr = COALESCE($1, translation_fr),
             translation_en = COALESCE($2, translation_en),
-            transcription = COALESCE($3, transcription),
+            translation_wo = COALESCE($3, translation_wo),
+            transcription = COALESCE($4, transcription),
             updated_at = NOW()
-          WHERE id = $4
+          WHERE id = $5
           RETURNING id
-        `, [translation_fr || null, translation_en || null, transcription || null, finalVerseId]);
+        `, [translation_fr || null, translation_en || null, translation_wo || null, transcription || null, finalVerseId]);
 
         if (result.rows.length > 0) {
           updated++;
@@ -327,6 +340,65 @@ router.post('/:id/audios', requireAuth, requireRole('SuperAdmin', 'Admin', 'Gera
   }
 });
 
+// POST download YouTube audio → DigitalOcean Spaces
+router.post('/:id/audios/:audioId/download-to-spaces', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), async (req: Request, res: Response) => {
+  const { id, audioId } = req.params;
+  try {
+    // Get the audio record
+    const audioResult = await pool.query(
+      'SELECT id, xassida_id, youtube_id, audio_url FROM xassida_audios WHERE id = $1 AND xassida_id = $2',
+      [audioId, id]
+    );
+    if (audioResult.rows.length === 0) return res.status(404).json({ error: 'Audio introuvable' });
+
+    const audio = audioResult.rows[0];
+    if (!audio.youtube_id) return res.status(400).json({ error: 'Cet audio n\'a pas de YouTube ID' });
+
+    const youtubeUrl = `https://www.youtube.com/watch?v=${audio.youtube_id}`;
+
+    // Stream yt-dlp output directly into memory (no temp file)
+    const audioBuffer: Buffer = await new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const ytdlp = spawn('yt-dlp', [
+        '-x',
+        '--audio-format', 'mp3',
+        '--audio-quality', '5',
+        '--no-playlist',
+        '-o', '-',          // output to stdout
+        youtubeUrl,
+      ]);
+      ytdlp.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+      ytdlp.stderr.on('data', (d: Buffer) => console.log('[yt-dlp]', d.toString()));
+      ytdlp.on('close', (code) => {
+        if (code !== 0) return reject(new Error(`yt-dlp exited with code ${code}`));
+        resolve(Buffer.concat(chunks));
+      });
+      ytdlp.on('error', reject);
+    });
+
+    // Upload to Spaces
+    const key = `audios/xassida-${id}-audio-${audioId}-${Date.now()}.mp3`;
+    const spacesUrl = await uploadToSpaces(audioBuffer, key, 'audio/mpeg');
+
+    // Delete old Spaces file if replacing
+    if (audio.audio_url) {
+      const oldKey = keyFromUrl(audio.audio_url);
+      if (oldKey) await deleteFromSpaces(oldKey).catch(() => {});
+    }
+
+    // Update DB
+    await pool.query(
+      'UPDATE xassida_audios SET audio_url = $1, youtube_id = youtube_id WHERE id = $2',
+      [spacesUrl, audioId]
+    );
+
+    res.json({ audio_url: spacesUrl, message: 'Audio stocké sur Spaces' });
+  } catch (error: any) {
+    console.error('Error downloading audio to Spaces:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // PUT update audio
 router.put('/:id/audios/:audioId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
@@ -410,11 +482,12 @@ router.get('/:id', async (req: Request, res: Response) => {
         COALESCE(x.youtube_id, '') as youtube_id,
         COALESCE(x.categorie, 'Autre') as categorie,
         COALESCE(x.verse_count, 0) as verse_count,
+        COALESCE(x.chapters_json, '{}') as chapters_json,
         x.created_at,
         a.id::text as author_id,
         a.name as author_name,
         a.photo_url
-      FROM xassidas x 
+      FROM xassidas x
       LEFT JOIN authors a ON x.author_id = a.id
       WHERE x.id = $1
     `, [id]);
@@ -426,15 +499,16 @@ router.get('/:id', async (req: Request, res: Response) => {
     // Get verses
     const versesResult = await pool.query(`
       SELECT 
-        id, 
-        xassida_id, 
-        chapter_number, 
-        verse_number, 
+        id,
+        xassida_id,
+        chapter_number,
+        verse_number,
         verse_key,
         text_arabic,
         transcription,
         translation_fr,
         translation_en,
+        translation_wo,
         words,
         audio_url,
         created_at,
@@ -470,16 +544,17 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.get('/:id/verses', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(`
-      SELECT 
-        id, 
-        xassida_id, 
-        chapter_number, 
-        verse_number, 
+      SELECT
+        id,
+        xassida_id,
+        chapter_number,
+        verse_number,
         verse_key,
         text_arabic,
         transcription,
         translation_fr,
         translation_en,
+        translation_wo,
         words,
         audio_url,
         notes,
@@ -496,21 +571,81 @@ router.get('/:id/verses', async (req: Request, res: Response) => {
   }
 });
 
+// PUT update a single verse
+router.put('/:id/verses/:verseId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
+  try {
+    const { verseId } = req.params;
+    const { text_arabic, transcription, translation_fr, translation_en, translation_wo, audio_url, verse_number, chapter_number } = req.body;
+
+    const result = await pool.query(`
+      UPDATE verses SET
+        text_arabic    = COALESCE($1, text_arabic),
+        transcription  = COALESCE($2, transcription),
+        translation_fr = COALESCE($3, translation_fr),
+        translation_en = COALESCE($4, translation_en),
+        translation_wo = COALESCE($5, translation_wo),
+        audio_url      = COALESCE($6, audio_url),
+        verse_number   = COALESCE($7, verse_number),
+        chapter_number = COALESCE($8, chapter_number),
+        content        = COALESCE($1, text_arabic),
+        updated_at     = NOW()
+      WHERE id = $9
+      RETURNING id, xassida_id, chapter_number, verse_number, text_arabic, transcription, translation_fr, translation_en, translation_wo, audio_url, updated_at
+    `, [
+      text_arabic || null,
+      transcription || null,
+      translation_fr || null,
+      translation_en || null,
+      translation_wo || null,
+      audio_url || null,
+      verse_number ?? null,
+      chapter_number ?? null,
+      verseId,
+    ]);
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Verse not found' });
+    res.json(result.rows[0]);
+  } catch (error: any) {
+    console.error('Error updating verse:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE a single verse
+router.delete('/:id/verses/:verseId', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
+  try {
+    const { id, verseId } = req.params;
+    const result = await pool.query(
+      'DELETE FROM verses WHERE id = $1 AND xassida_id = $2 RETURNING id',
+      [verseId, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Verse not found' });
+
+    // Update verse_count
+    const countResult = await pool.query('SELECT COUNT(*) as count FROM verses WHERE xassida_id = $1', [id]);
+    await pool.query('UPDATE xassidas SET verse_count = $1 WHERE id = $2', [countResult.rows[0].count, id]);
+
+    res.json({ message: 'Verse deleted', id: verseId });
+  } catch (error: any) {
+    console.error('Error deleting verse:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // CREATE xassida
 router.post('/', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
-    const { title, author_id, description, audio_url, arabic_name, categorie } = req.body;
+    const { title, author_id, description, audio_url, arabic_name, categorie, is_fiqh } = req.body;
 
     if (!title || !author_id) {
       return res.status(400).json({ error: 'title and author_id are required' });
     }
 
-    const id = uuid();
     const result = await pool.query(`
-      INSERT INTO xassidas (id, title, author_id, description, audio_url, arabic_name, categorie, created_at)
+      INSERT INTO xassidas (title, author_id, description, audio_url, arabic_name, categorie, is_fiqh, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-      RETURNING id, title, description, audio_url, arabic_name, categorie, created_at, author_id
-    `, [id, title, author_id, description || null, audio_url || null, arabic_name || null, categorie || 'Autre']);
+      RETURNING id, title, description, audio_url, arabic_name, categorie, is_fiqh, created_at, author_id
+    `, [title, author_id, description || null, audio_url || null, arabic_name || null, categorie || 'Autre', is_fiqh || false]);
 
     res.status(201).json(result.rows[0]);
   } catch (error: any) {
@@ -523,7 +658,9 @@ router.post('/', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'
 router.put('/:id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassida'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { title, description, author_id, audio_url, arabic_name, categorie } = req.body;
+    const { title, description, author_id, audio_url, arabic_name, categorie, is_fiqh, chapters_json } = req.body;
+
+    const chaptersJsonStr = chapters_json != null ? JSON.stringify(chapters_json) : null;
 
     const result = await pool.query(`
       UPDATE xassidas
@@ -532,10 +669,12 @@ router.put('/:id', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantXassid
           author_id = COALESCE($3, author_id),
           audio_url = COALESCE($4, audio_url),
           arabic_name = COALESCE($5, arabic_name),
-          categorie = COALESCE($6, categorie)
+          categorie = COALESCE($6, categorie),
+          is_fiqh = CASE WHEN $8::text IS NOT NULL THEN ($8::text)::boolean ELSE is_fiqh END,
+          chapters_json = CASE WHEN $9::text IS NOT NULL THEN ($9::text)::jsonb ELSE chapters_json END
       WHERE id = $7
-      RETURNING id, title, description, audio_url, arabic_name, categorie, youtube_id, created_at, author_id
-    `, [title || null, description || null, author_id || null, audio_url || null, arabic_name || null, categorie || null, id]);
+      RETURNING id, title, description, audio_url, arabic_name, categorie, is_fiqh, chapters_json, youtube_id, created_at, author_id
+    `, [title || null, description || null, author_id || null, audio_url || null, arabic_name || null, categorie || null, id, is_fiqh != null ? String(is_fiqh) : null, chaptersJsonStr]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Xassida not found' });
@@ -635,41 +774,35 @@ router.post('/:id/set-youtube-id', requireAuth, requireRole('SuperAdmin', 'Admin
   }
 });
 
-// UPLOAD audio for xassida
+// UPLOAD audio for xassida → DigitalOcean Spaces (ou local en fallback)
 router.post('/:id/upload-audio', requireAuth, requireRole('SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida'), upload.single('file'), async (req: Request, res: Response) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file provided' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-    // Validate file type
     const allowedMimes = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4'];
     if (!allowedMimes.includes(req.file.mimetype)) {
-      return res.status(400).json({ error: 'Invalid audio format. Allowed: MP3, WAV, OGG, WebM, M4A' });
+      return res.status(400).json({ error: 'Format invalide. Autorisés : MP3, WAV, OGG, WebM, M4A' });
     }
 
-    // Create filename
-    const ext = req.file.mimetype === 'audio/mpeg' ? 'mp3' : 
-               req.file.mimetype === 'audio/wav' ? 'wav' : 
-               req.file.mimetype === 'audio/ogg' ? 'ogg' : 
-               req.file.mimetype === 'audio/webm' ? 'webm' : 'm4a';
+    const ext = req.file.mimetype === 'audio/mpeg' ? 'mp3'
+              : req.file.mimetype === 'audio/wav'  ? 'wav'
+              : req.file.mimetype === 'audio/ogg'  ? 'ogg'
+              : req.file.mimetype === 'audio/webm' ? 'webm' : 'm4a';
     const filename = `${req.params.id}-${Date.now()}.${ext}`;
-    const filePath = path.join(audioDir, filename);
 
-    // Ensure directory exists
-    await ensureAudioDir();
+    let audioUrl: string;
 
-    // Save file
-    await fs.writeFile(filePath, req.file.buffer);
+    if (SPACES_ENABLED) {
+      const key = `audios/${filename}`;
+      audioUrl = await uploadToSpaces(req.file.buffer, key, req.file.mimetype);
+    } else {
+      // Fallback local
+      await ensureAudioDir();
+      await fs.writeFile(path.join(audioDir, filename), req.file.buffer);
+      audioUrl = `/audios/${filename}`;
+    }
 
-    // Generate audio URL (relative to public directory)
-    const audioUrl = `/audios/${filename}`;
-
-    res.json({
-      message: 'Audio uploaded successfully',
-      audioUrl,
-      filename
-    });
+    res.json({ message: 'Audio uploadé avec succès', audioUrl, filename, storage: SPACES_ENABLED ? 'spaces' : 'local' });
   } catch (error: any) {
     console.error('Audio upload error:', error);
     res.status(500).json({ error: error.message });
@@ -737,8 +870,8 @@ router.post('/:id/verses', requireAuth, requireRole('SuperAdmin', 'Admin', 'Gera
         const verseKey = `${chapterNum}:${verseNum}`;
 
         await pool.query(`
-          INSERT INTO verses (xassida_id, verse_number, chapter_number, verse_key, text_arabic, transcription, translation_fr, translation_en, content, created_at, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+          INSERT INTO verses (xassida_id, verse_number, chapter_number, verse_key, text_arabic, transcription, translation_fr, translation_en, translation_wo, content, created_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
         `, [
           id,
           verseNum,
@@ -748,6 +881,7 @@ router.post('/:id/verses', requireAuth, requireRole('SuperAdmin', 'Admin', 'Gera
           verse.transcription || null,
           verse.translation_fr || null,
           verse.translation_en || null,
+          verse.translation_wo || null,
           verse.text_arabic || '',
         ]);
         inserted++;
