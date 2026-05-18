@@ -1,3 +1,4 @@
+voici server.ts
 import EXPRESS from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -288,22 +289,13 @@ const allowedOrigins = frontendUrl
 
 app.use(cors({
   origin: (origin, callback) => {
+    // Allow requests with no origin (curl, Postman, same-origin)
     if (!origin) return callback(null, true);
-
-    const normalizedOrigin = origin.replace(/\/$/, '');
-
-    const allowedOrigins = [
-      'http://localhost:8080',
-      'http://localhost:5173',
-      'http://127.0.0.1:8080'
-    ];
-
-    if (allowedOrigins.includes(normalizedOrigin)) {
-      return callback(null, true);
-    }
-
-    console.log('❌ CORS blocked:', origin);
-    return callback(new Error('Not allowed by CORS'));
+    // In production, allow all origins for now
+    if (allowAllOrigins) return callback(null, true);
+    // Check against allowed origins
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true
 }));
