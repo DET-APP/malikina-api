@@ -18,7 +18,7 @@
     "allowJs": true,
     "types": ["node"]
   },
-  "include": ["./**/*.ts"],
+  "include": ["./**/*.ts", "scripts/sync-with-online-api.js"],
   "exclude": ["node_modules", "dist"]
 }
 
