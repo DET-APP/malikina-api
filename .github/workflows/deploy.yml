@@ -60,7 +60,10 @@ jobs:
               -e DB_HOST=malikina-db \
               -e DB_PORT=5432 \
               malikina-api:latest
-            echo "✓ Container started"
+
+            # nginx is on malikina_malikina-network — connect API to both networks
+            docker network connect malikina_malikina-network malikina-api 2>/dev/null || true
+            echo "✓ Container started (connected to both networks)"
 
             # ── 4. Wait for API to be ready (HTTP check) ─
             for i in $(seq 1 20); do
