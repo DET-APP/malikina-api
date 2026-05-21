@@ -233,4 +233,106 @@ router.post('/web-import', ...adminOnly, async (req: Request, res: Response) => 
   }
 });
 
+// ── Questions sans réponse ────────────────────────────────────────────────────
+
+/**
+ * GET /api/knowledge/unanswered?answered=false
+ * Liste les questions que le chatbot n'a pas su répondre.
+ */
+router.get('/unanswered', ...adminOnly, async (req: Request, res: Response) => {
+  const answered = req.query.answered === 'true';
+  try {
+    const result = await pool.query(
+      `SELECT id, question, asked_at, answered, answered_at, chunk_id
+       FROM unanswered_questions
+       WHERE answered = $1
+       ORDER BY asked_at DESC
+       LIMIT 100`,
+      [answered]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    console.error('[KNOWLEDGE] unanswered list error:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * POST /api/knowledge/unanswered/:id/answer
+ * Répond à une question sans réponse en créant un chunk de connaissance.
+ * Body: { title, content, source? }
+ */
+router.post('/unanswered/:id/answer', ...adminOnly, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { title, content, source } = req.body;
+
+  if (!content?.trim()) {
+    return res.status(400).json({ error: 'Le champ content est requis' });
+  }
+
+  try {
+    // Récupérer la question
+    const qResult = await pool.query(
+      'SELECT * FROM unanswered_questions WHERE id = $1',
+      [id]
+    );
+    if (!qResult.rows[0]) {
+      return res.status(404).json({ error: 'Question non trouvée' });
+    }
+    const question = qResult.rows[0];
+
+    // Créer le chunk de connaissance
+    const chunkResult = await pool.query(
+      `INSERT INTO knowledge_chunks (source, title, content, language, metadata)
+       VALUES ($1, $2, $3, 'fr', $4)
+       RETURNING id, title`,
+      [
+        source?.trim() || 'Admin — Réponse manuelle',
+        title?.trim() || question.question.slice(0, 80),
+        content.trim(),
+        JSON.stringify({ created_by: req.admin?.email, manual: true, from_unanswered: id }),
+      ]
+    );
+
+    const chunk = chunkResult.rows[0];
+
+    // Marquer la question comme répondue
+    await pool.query(
+      `UPDATE unanswered_questions
+       SET answered = true, answered_at = NOW(), answer = $1, chunk_id = $2
+       WHERE id = $3`,
+      [content.trim(), chunk.id, id]
+    );
+
+    res.status(201).json({
+      message: 'Réponse enregistrée et ajoutée à la base de connaissances',
+      chunk,
+    });
+  } catch (err: any) {
+    console.error('[KNOWLEDGE] answer unanswered error:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * DELETE /api/knowledge/unanswered/:id
+ * Supprimer une question sans réponse (ex: question hors sujet).
+ */
+router.delete('/unanswered/:id', ...adminOnly, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      'DELETE FROM unanswered_questions WHERE id = $1 RETURNING id, question',
+      [id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Question non trouvée' });
+    }
+    res.json({ message: 'Question supprimée', question: result.rows[0] });
+  } catch (err: any) {
+    console.error('[KNOWLEDGE] delete unanswered error:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 export { router as knowledgeRoutes };

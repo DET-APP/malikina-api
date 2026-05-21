@@ -133,7 +133,22 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const context = buildContext(chunks);
-    const answer = await chatWithGroq(message, context, history);
+    const rawAnswer = await chatWithGroq(message, context, history);
+
+    // Détecter si le LLM signale qu'il ne sait pas répondre
+    const isUnanswered = rawAnswer.includes('[UNANSWERED]');
+    const answer = rawAnswer.replace('[UNANSWERED]', '').trim();
+
+    if (isUnanswered) {
+      // Stocker la question pour les admins (dédupliqué)
+      pool.query(
+        `INSERT INTO unanswered_questions (question)
+         SELECT $1 WHERE NOT EXISTS (
+           SELECT 1 FROM unanswered_questions WHERE question = $1 AND answered = false
+         )`,
+        [message.trim()]
+      ).catch(err => console.warn('[CHAT] Erreur stockage question sans réponse:', err.message));
+    }
 
     const references = chunks.length > 0
       ? chunks.map(c => ({ source: c.source, title: c.title, similarity: Math.round(c.similarity * 100) }))
@@ -142,6 +157,7 @@ router.post('/', async (req: Request, res: Response) => {
     return res.json({
       type: 'knowledge_answer',
       message: answer,
+      unanswered: isUnanswered,
       references,
     });
   } catch (err: any) {
