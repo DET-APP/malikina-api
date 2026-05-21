@@ -31,7 +31,7 @@ jobs:
             # ── 1. Update source code ─────────────────
             if [ -d /root/malikina-api/.git ]; then
               cd /root/malikina-api
-              git fetch "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" "$BRANCH:$BRANCH"
+              git fetch "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" "+$BRANCH:$BRANCH"
               git reset --hard "$BRANCH"
             else
               git clone -b "$BRANCH" "https://x-token:${GH_TOKEN}@github.com/${REPO}.git" /root/malikina-api

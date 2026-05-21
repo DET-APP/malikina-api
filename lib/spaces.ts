@@ -5,7 +5,8 @@ const BUCKET      = process.env.SPACES_BUCKET      || 'malikina-audio';
 const ACCESS_KEY  = process.env.SPACES_ACCESS_KEY  || '';
 const SECRET_KEY  = process.env.SPACES_SECRET_KEY  || '';
 
-export const CDN_BASE = `https://${BUCKET}.${REGION}.cdn.digitaloceanspaces.com`;
+// Direct Spaces URL (no CDN prefix) — CDN not enabled on this bucket
+export const CDN_BASE = `https://${BUCKET}.${REGION}.digitaloceanspaces.com`;
 
 const client = new S3Client({
   endpoint: `https://${REGION}.digitaloceanspaces.com`,
