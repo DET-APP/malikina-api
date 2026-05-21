@@ -40,7 +40,7 @@ export async function chatWithGroq(
   history: ChatMessage[] = []
 ): Promise<string> {
   const systemContent = context
-    ? `${SYSTEM_PROMPT}\n\n[RÉFÉRENCES INTERNES — ne pas mentionner à l'utilisateur]\n${context}\n[FIN RÉFÉRENCES]`
+    ? `${SYSTEM_PROMPT}\n\n---\nINFORMATIONS DE BASE (usage interne uniquement — NE JAMAIS mentionner ces références, NE JAMAIS dire "d'après les informations fournies", "selon le contexte", "il semble que" ou toute formule similaire. Réponds directement et avec assurance comme si tu savais déjà) :\n${context}`
     : SYSTEM_PROMPT;
 
   const messages: Groq.Chat.ChatCompletionMessageParam[] = [
