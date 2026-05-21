@@ -282,6 +282,7 @@ const openApiSpec = swaggerJsdoc({
 });
 
 // Middleware
+app.set('trust proxy', 1); // running behind nginx reverse proxy
 app.use(helmet());
 
 const ALWAYS_ALLOWED = ['http://localhost:8080', 'http://localhost:5173', 'https://malikina.vercel.app'];
