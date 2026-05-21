@@ -8,6 +8,70 @@ const router = Router();
 // Middleware commun : SuperAdmin ou Admin seulement
 const adminOnly = [requireAuth, requireRole('SuperAdmin', 'Admin')];
 
+// ── Signalements (feedback) ───────────────────────────────────────────────────
+
+/**
+ * GET /api/knowledge/reports?reviewed=false
+ */
+router.get('/reports', ...adminOnly, async (req: Request, res: Response) => {
+  const reviewed = req.query.reviewed === 'true';
+  try {
+    const result = await pool.query(
+      `SELECT id, message, bot_answer, reported_at, reviewed, reviewed_at, note
+       FROM feedback_reports
+       WHERE reviewed = $1
+       ORDER BY reported_at DESC
+       LIMIT 100`,
+      [reviewed]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    console.error('[KNOWLEDGE] reports list error:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * PATCH /api/knowledge/reports/:id/review
+ * Marquer un signalement comme traité. Body: { note? }
+ */
+router.patch('/reports/:id/review', ...adminOnly, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { note } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE feedback_reports
+       SET reviewed = true, reviewed_at = NOW(), note = $1
+       WHERE id = $2
+       RETURNING id`,
+      [note?.trim() || null, id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Signalement non trouvé' });
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[KNOWLEDGE] report review error:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+/**
+ * DELETE /api/knowledge/reports/:id
+ */
+router.delete('/reports/:id', ...adminOnly, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      'DELETE FROM feedback_reports WHERE id = $1 RETURNING id',
+      [id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Signalement non trouvé' });
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[KNOWLEDGE] report delete error:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // ── Static routes (must be declared BEFORE /:id) ─────────────────────────────
 
 /**

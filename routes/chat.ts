@@ -249,4 +249,25 @@ router.get('/xassidas/search', async (req: Request, res: Response) => {
   res.json(result.rows);
 });
 
+// POST /api/chat/report — signaler une mauvaise réponse (sans auth)
+router.post('/report', async (req: Request, res: Response) => {
+  const { message, bot_answer } = req.body;
+
+  if (!message?.trim() || !bot_answer?.trim()) {
+    return res.status(400).json({ error: 'Les champs message et bot_answer sont requis' });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO feedback_reports (message, bot_answer)
+       VALUES ($1, $2)`,
+      [message.trim(), bot_answer.trim()]
+    );
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[CHAT] report error:', err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 export { router as chatRoutes };
