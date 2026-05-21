@@ -47,31 +47,20 @@ jobs:
             docker stop malikina-api 2>/dev/null || true
             docker rm   malikina-api 2>/dev/null || true
 
-            # Detect docker network (compose network name varies)
-            NETWORK=$(docker network ls --format '{{.Name}}' | grep malikina | grep -v '^$' | head -1)
-            [ -z "$NETWORK" ] && NETWORK=bridge
-
-            # Use --env-file — check both possible locations
-            ENV_FILE_ARG=""
-            if [ -f /root/malikina-api/.env ]; then
-              ENV_FILE_ARG="--env-file /root/malikina-api/.env"
-            elif [ -f /root/malikina/.env ]; then
-              ENV_FILE_ARG="--env-file /root/malikina/.env"
-            fi
-            echo "ENV file: ${ENV_FILE_ARG:-none found}"
-
+            # .env lives in /root/malikina (shared secrets for the whole stack)
+            # network = malikina_malikina-network (created by docker-compose.deploy.yml)
             docker run -d \
               --name malikina-api \
-              --network "$NETWORK" \
+              --network malikina_malikina-network \
               --restart unless-stopped \
               -p 5000:5000 \
-              -v /root/malikina-api/public:/app/public \
+              -v /root/malikina/api/public/audios:/app/public/audios \
+              --env-file /root/malikina/.env \
               -e NODE_ENV=production \
               -e DB_HOST=malikina-db \
               -e DB_PORT=5432 \
-              $ENV_FILE_ARG \
               malikina-api:latest
-            echo "✓ Container started (network: $NETWORK)"
+            echo "✓ Container started"
 
             # ── 4. Wait for API to be ready (HTTP check) ─
             for i in $(seq 1 20); do
