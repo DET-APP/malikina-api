@@ -51,7 +51,7 @@ jobs:
             # network = malikina_malikina-network (created by docker-compose.deploy.yml)
             docker run -d \
               --name malikina-api \
-              --network malikina_malikina-network \
+              --network malikina-api_malikina-network \
               --restart unless-stopped \
               -p 5000:5000 \
               -v /root/malikina/api/public/audios:/app/public/audios \
