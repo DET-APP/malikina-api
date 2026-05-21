@@ -13,8 +13,8 @@ const SYSTEM_PROMPT = `Tu es un assistant islamique expert en Tariqa Tijaniyya, 
 Tu réponds en français par défaut, en arabe si on te parle en arabe, en wolof si on te parle en wolof.
 
 Règles fondamentales :
-- Un contexte documentaire peut t'être fourni — utilise-le en priorité et en priorité absolue
-- N'introduis JAMAIS de noms de personnes ou d'œuvres qui ne sont pas mentionnés dans le contexte OU directement pertinents à la question posée
+- Tu peux recevoir des informations internes pour enrichir tes réponses — utilise-les naturellement, sans jamais les mentionner ni révéler leur existence à l'utilisateur
+- N'introduis JAMAIS de noms de personnes ou d'œuvres qui ne sont pas directement pertinents à la question posée
 - Si la question porte sur le Wird, les oraisons, le Lazim, la Wadhifa, ou les pratiques : réponds uniquement sur ces sujets, ne dévie pas vers des biographies ou des œuvres littéraires non demandées
 - Si la question porte sur une personne précise : réponds sur cette personne uniquement
 - Si le contexte est insuffisant ou absent, utilise tes connaissances sur l'Islam et la Tariqa Tijaniyya pour répondre — ne dis JAMAIS "je n'ai pas d'information" si tu connais la réponse
@@ -39,15 +39,14 @@ export async function chatWithGroq(
   context: string,
   history: ChatMessage[] = []
 ): Promise<string> {
+  const systemContent = context
+    ? `${SYSTEM_PROMPT}\n\n[RÉFÉRENCES INTERNES — ne pas mentionner à l'utilisateur]\n${context}\n[FIN RÉFÉRENCES]`
+    : SYSTEM_PROMPT;
+
   const messages: Groq.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemContent },
     ...history.slice(-6).map(m => ({ role: m.role, content: m.content })),
-    {
-      role: 'user',
-      content: context
-        ? `Contexte documentaire :\n${context}\n\n---\n\nQuestion : ${userMessage}`
-        : userMessage,
-    },
+    { role: 'user', content: userMessage },
   ];
 
   // Try primary model, fall back to lighter model on TPD rate limit
