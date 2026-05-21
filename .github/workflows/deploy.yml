@@ -46,8 +46,28 @@ jobs:
             # ── 3. Restart API container ───────────────
             docker stop malikina-api 2>/dev/null || true
             docker rm   malikina-api 2>/dev/null || true
-            cd /root/malikina-api
-            docker compose up -d --no-deps api
+
+            # Load env vars from .env file on server
+            ENV_FILE=/root/malikina-api/.env
+            ENV_ARGS=""
+            if [ -f "$ENV_FILE" ]; then
+              while IFS= read -r line || [ -n "$line" ]; do
+                [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+                ENV_ARGS="$ENV_ARGS -e $line"
+              done < "$ENV_FILE"
+            fi
+
+            docker run -d \
+              --name malikina-api \
+              --network malikina-api_malikina-network \
+              --restart unless-stopped \
+              -p 5000:5000 \
+              -v /root/malikina-api/public:/app/public \
+              -e NODE_ENV=production \
+              -e DB_HOST=malikina-db \
+              -e DB_PORT=5432 \
+              $ENV_ARGS \
+              malikina-api:latest
             echo "✓ Container started"
 
             # ── 4. Wait for API to be ready (HTTP check) ─
