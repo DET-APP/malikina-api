@@ -7,9 +7,12 @@ export interface SearchResult {
 }
 
 // ── Wikipedia API (100% gratuit, sans clé) ────────────────────────────────────
+const WIKI_HEADERS = {
+  'User-Agent': 'MalikinaChatbot/1.0 (https://malikina.vercel.app; contact@malikina.app) axios/1.x',
+};
+
 async function searchWikipedia(query: string, count: number): Promise<SearchResult[]> {
   try {
-    // Recherche en français d'abord
     const searchRes = await axios.get('https://fr.wikipedia.org/w/api.php', {
       params: {
         action: 'query',
@@ -17,15 +20,14 @@ async function searchWikipedia(query: string, count: number): Promise<SearchResu
         srsearch: query,
         srlimit: count,
         format: 'json',
-        origin: '*',
       },
+      headers: WIKI_HEADERS,
       timeout: 8000,
     });
 
     const pages = searchRes.data?.query?.search || [];
     if (pages.length === 0) return [];
 
-    // Récupérer les extraits des pages trouvées
     const pageIds = pages.map((p: any) => p.pageid).join('|');
     const extractRes = await axios.get('https://fr.wikipedia.org/w/api.php', {
       params: {
@@ -36,8 +38,8 @@ async function searchWikipedia(query: string, count: number): Promise<SearchResu
         explaintext: true,
         inprop: 'url',
         format: 'json',
-        origin: '*',
       },
+      headers: WIKI_HEADERS,
       timeout: 8000,
     });
 

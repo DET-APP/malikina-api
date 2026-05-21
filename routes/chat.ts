@@ -146,6 +146,14 @@ router.post('/', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[CHAT] Erreur RAG/Groq:', err.message);
+    const isRateLimit = err?.status === 429 || err?.message?.includes('rate_limit') || err?.message?.includes('Rate limit');
+    if (isRateLimit) {
+      return res.status(429).json({
+        type: 'knowledge_answer',
+        message: 'Le service de réponse est temporairement saturé (limite de requêtes atteinte). Réessaie dans quelques minutes.',
+        references: [],
+      });
+    }
     return res.status(500).json({ error: 'Erreur lors du traitement de la question.' });
   }
 });

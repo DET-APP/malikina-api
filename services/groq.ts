@@ -46,12 +46,24 @@ export async function chatWithGroq(
     },
   ];
 
-  const completion = await getGroq().chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    messages,
-    max_tokens: 1024,
-    temperature: 0.3,
-  });
-
-  return completion.choices[0]?.message?.content || 'Je n\'ai pas pu générer une réponse.';
+  // Try primary model, fall back to lighter model on TPD rate limit
+  for (const model of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
+    try {
+      const completion = await getGroq().chat.completions.create({
+        model,
+        messages,
+        max_tokens: 1024,
+        temperature: 0.3,
+      });
+      return completion.choices[0]?.message?.content || 'Je n\'ai pas pu générer une réponse.';
+    } catch (err: any) {
+      const isRateLimit = err?.status === 429 || err?.message?.includes('rate_limit');
+      if (isRateLimit && model !== 'llama-3.1-8b-instant') {
+        console.warn(`[GROQ] Rate limit sur ${model}, bascule vers llama-3.1-8b-instant`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Tous les modèles Groq sont en limite de débit.');
 }
