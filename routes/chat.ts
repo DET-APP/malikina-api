@@ -3,6 +3,7 @@ import { pool } from '../db/config.js';
 import { searchKnowledgeHybrid, buildContext } from '../services/rag.js';
 import { chatWithGroq, ChatMessage } from '../services/groq.js';
 import { generateXassidaPdf, PdfLanguage } from '../services/pdfGenerator.js';
+import { searchAndStore } from '../services/webSearch.js';
 
 const router = Router();
 
@@ -118,6 +119,19 @@ router.post('/', async (req: Request, res: Response) => {
   // ── Intent: question sur les connaissances tidianes (RAG) ──────
   try {
     const chunks = await searchKnowledgeHybrid(message, 5);
+
+    // Auto-enrichissement : si contexte insuffisant, déclencher une recherche web en arrière-plan
+    const contextInsuffisant =
+      chunks.length === 0 || chunks.every(c => c.similarity < 0.15);
+
+    if (contextInsuffisant) {
+      console.log(`[CHAT] Auto-enrichissement: recherche web pour "${message}"`);
+      // Fire-and-forget : ne pas bloquer la réponse à l'utilisateur
+      searchAndStore(message, pool).catch(err =>
+        console.warn('[CHAT] Erreur auto-enrichissement:', err.message)
+      );
+    }
+
     const context = buildContext(chunks);
     const answer = await chatWithGroq(message, context, history);
 
