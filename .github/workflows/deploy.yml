@@ -47,28 +47,31 @@ jobs:
             docker stop malikina-api 2>/dev/null || true
             docker rm   malikina-api 2>/dev/null || true
 
-            # Load env vars from .env file on server
-            ENV_FILE=/root/malikina-api/.env
-            ENV_ARGS=""
-            if [ -f "$ENV_FILE" ]; then
-              while IFS= read -r line || [ -n "$line" ]; do
-                [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-                ENV_ARGS="$ENV_ARGS -e $line"
-              done < "$ENV_FILE"
+            # Detect docker network (compose network name varies)
+            NETWORK=$(docker network ls --format '{{.Name}}' | grep malikina | grep -v '^$' | head -1)
+            [ -z "$NETWORK" ] && NETWORK=bridge
+
+            # Use --env-file — check both possible locations
+            ENV_FILE_ARG=""
+            if [ -f /root/malikina-api/.env ]; then
+              ENV_FILE_ARG="--env-file /root/malikina-api/.env"
+            elif [ -f /root/malikina/.env ]; then
+              ENV_FILE_ARG="--env-file /root/malikina/.env"
             fi
+            echo "ENV file: ${ENV_FILE_ARG:-none found}"
 
             docker run -d \
               --name malikina-api \
-              --network malikina-api_malikina-network \
+              --network "$NETWORK" \
               --restart unless-stopped \
               -p 5000:5000 \
               -v /root/malikina-api/public:/app/public \
               -e NODE_ENV=production \
               -e DB_HOST=malikina-db \
               -e DB_PORT=5432 \
-              $ENV_ARGS \
+              $ENV_FILE_ARG \
               malikina-api:latest
-            echo "✓ Container started"
+            echo "✓ Container started (network: $NETWORK)"
 
             # ── 4. Wait for API to be ready (HTTP check) ─
             for i in $(seq 1 20); do
