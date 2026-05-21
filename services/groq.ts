@@ -1,6 +1,12 @@
 import Groq from 'groq-sdk';
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+let _groq: Groq | null = null;
+function getGroq(): Groq {
+  if (!_groq) {
+    _groq = new Groq({ apiKey: process.env.GROQ_API_KEY || '' });
+  }
+  return _groq;
+}
 
 const SYSTEM_PROMPT = `Tu es un assistant islamique spécialisé dans la Tariqa Tijaniyya et les œuvres de Seydi El Hadji Malick Sy et des maîtres tidianes.
 
@@ -39,7 +45,7 @@ export async function chatWithGroq(
     },
   ];
 
-  const completion = await groq.chat.completions.create({
+  const completion = await getGroq().chat.completions.create({
     model: 'llama-3.3-70b-versatile',
     messages,
     max_tokens: 1024,
