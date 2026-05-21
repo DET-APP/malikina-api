@@ -8,7 +8,7 @@ INSERT INTO knowledge_chunks (source, title, language, content, metadata) VALUES
   'fr',
   'Dans le contexte tidiane sénégalais, plusieurs personnalités sont désignées par des surnoms ou appellations populaires :
 
-"SEYDINA CHEIKH" ou "CHEIKH" (tout court) : désigne Serigne Cheikh Ahmed Tidiane Sy Al Maktoum (1925-2017), 5e Khalife Général des Tidianes de Tivaouane (2012-2017). Fils de Serigne Babacar Sy, petit-fils de Seydi El Hadji Malick Sy. Appelé "Al Maktoum" (le Pôle Caché). Surnommé "le marabout intellectuel du Sénégal". Ne pas confondre avec d''autres personnages portant "Cheikh" dans leur nom.
+"SEYDINA CHEIKH", "CHEIKH TIDIANE", "CHEIKHOU TIDIANE", "LE CHEIKH" ou "CHEIKH" (tout court) : ces appellations désignent TOUJOURS le fondateur de la Tariqa Tijaniyya, Cheikh Ahmed Tijani Chérif (1737-1815), et non une autre personne. C''est lui le "Cheikh" par excellence dans la tradition tidianie. Né à Aïn Madhi (Algérie), il reçut la Tariqa directement du Prophète Muhammad ﷺ à l''état de veille en 1196 H à Boussemghoune, et s''installa à Fès (Maroc) où il mourut en 1230 H. Quand un disciple tidiane dit "le Cheikh a dit...", "Seydina Cheikh recommande...", "Cheikhou Tidiane a enseigné...", il parle TOUJOURS de Cheikh Ahmed Tijani Chérif.
 
 "BAYE NIASSE" ou "BAYE" : désigne Cheikh Ibrahim Niasse (1900-1975), fondateur de la Fayda Tijaniyya, basé à Kaolack (Sénégal). Figure mondiale de la Tijaniyya avec des millions de disciples en Afrique et dans le monde.
 
@@ -19,7 +19,7 @@ INSERT INTO knowledge_chunks (source, title, language, content, metadata) VALUES
 "SERIGNE BABACAR" : désigne Serigne Babacar Sy (1er Khalife de Tivaouane), fils de Seydi El Hadji Malick Sy, père de Serigne Cheikh Al Maktoum.
 
 "EL HADJI OMAR" ou "SEYDINA OMAR" : désigne El Hadji Oumar Tall (1794-1864), grand conquérant et propagateur de la Tijaniyya en Afrique de l''Ouest, auteur du Rimah.',
-  '{"type":"reference","sujet":"alias_personnages","mots_cles":["seydina cheikh","baye niasse","seydi malick","dabakh","alias","surnoms","tivaouane"]}'
+  '{"type":"reference","sujet":"alias_personnages","mots_cles":["seydina cheikh","cheikh tidiane","cheikhou tidiane","le cheikh","fondateur","baye niasse","seydi malick","dabakh","alias","surnoms","tivaouane"]}'
 )
 ON CONFLICT (source, title) DO UPDATE SET
   content = EXCLUDED.content,
