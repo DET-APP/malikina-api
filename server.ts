@@ -283,11 +283,9 @@ const openApiSpec = swaggerJsdoc({
 // Middleware
 app.use(helmet());
 
-const frontendUrl = process.env.FRONTEND_URL || '';
-const defaultOrigins = ['http://localhost:8080', 'http://localhost:5173', 'https://malikina.vercel.app'];
-const allowedOrigins = frontendUrl
-  ? frontendUrl.split(',').map(s => s.trim())
-  : defaultOrigins;
+const ALWAYS_ALLOWED = ['http://localhost:8080', 'http://localhost:5173', 'https://malikina.vercel.app'];
+const extraOrigins = (process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean);
+const allowedOrigins = [...new Set([...ALWAYS_ALLOWED, ...extraOrigins])];
 
 app.use(cors({
   origin: (origin, callback) => {
