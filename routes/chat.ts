@@ -136,8 +136,15 @@ router.post('/', async (req: Request, res: Response) => {
     const rawAnswer = await chatWithGroq(message, context, history);
 
     // Détecter si le LLM signale qu'il ne sait pas répondre
-    const isUnanswered = rawAnswer.includes('[UNANSWERED]');
-    const answer = rawAnswer.replace('[UNANSWERED]', '').trim();
+    const isUnanswered = /\[UNANSWERED\]/i.test(rawAnswer);
+    let answer = rawAnswer.replace(/\[UNANSWERED\]/gi, '').trim();
+
+    // Supprimer toute répétition de la question en tête de réponse (bug du modèle 8b)
+    const questionNormalized = message.trim().toLowerCase();
+    const firstLine = answer.split('\n')[0].trim().toLowerCase();
+    if (firstLine === questionNormalized || firstLine.startsWith(questionNormalized)) {
+      answer = answer.split('\n').slice(1).join('\n').trim();
+    }
 
     if (isUnanswered) {
       // Stocker la question pour les admins (dédupliqué)
