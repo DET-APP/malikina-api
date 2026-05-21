@@ -17,7 +17,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          timeout: 300s
+          timeout: 600s
           script: |
             set -e
             BRANCH="${{ github.ref_name }}"
