@@ -2,12 +2,33 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { pool } from '../db/config.js';
 import { requireAuth, requireRole, signToken, AdminUser } from '../middleware/auth.js';
+import { loginLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
+// Hiérarchie des rôles pour le RBAC (indice = niveau de privilège)
+const ROLE_LEVEL: Record<string, number> = {
+  SuperAdmin: 4,
+  Admin: 3,
+  GerantXassida: 2,
+  GerantAudio: 2,
+  Moderateur: 1
+};
+
+function getIp(req: Request): string {
+  return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+}
+
+function logAuth(event: string, email: string, ip: string, extra?: string) {
+  const ts = new Date().toISOString();
+  console.log(`[AUTH] ${ts} | ${event} | email=${email} | ip=${ip}${extra ? ' | ' + extra : ''}`);
+}
+
 // POST /api/auth/login
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginLimiter, async (req: Request, res: Response) => {
   const { email, password } = req.body;
+  const ip = getIp(req);
+
   if (!email || !password) {
     return res.status(400).json({ error: 'Email et mot de passe requis' });
   }
@@ -18,17 +39,21 @@ router.post('/login', async (req: Request, res: Response) => {
     );
     const user = result.rows[0];
     if (!user || !user.is_active) {
+      logAuth('LOGIN_FAILED', email, ip, 'user_not_found_or_inactive');
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
+      logAuth('LOGIN_FAILED', email, ip, 'wrong_password');
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
     await pool.query('UPDATE admin_users SET last_login_at = NOW() WHERE id = $1', [user.id]);
     const payload: AdminUser = { id: user.id, email: user.email, full_name: user.full_name, role: user.role };
+    logAuth('LOGIN_SUCCESS', email, ip, `role=${user.role}`);
     res.json({ token: signToken(payload), user: payload });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    logAuth('LOGIN_ERROR', email, ip, err.message);
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -47,6 +72,12 @@ router.post('/users', requireAuth, requireRole('SuperAdmin'), async (req: Reques
   if (!validRoles.includes(role)) {
     return res.status(400).json({ error: `Rôle invalide. Valeurs: ${validRoles.join(', ')}` });
   }
+  // Un SuperAdmin ne peut pas créer un autre SuperAdmin (sauf s'il est lui-même le seul)
+  const requesterLevel = ROLE_LEVEL[req.admin!.role] ?? 0;
+  const targetLevel = ROLE_LEVEL[role] ?? 0;
+  if (targetLevel >= requesterLevel && req.admin!.role !== 'SuperAdmin') {
+    return res.status(403).json({ error: 'Impossible de créer un utilisateur de niveau supérieur ou égal au vôtre' });
+  }
   try {
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(
@@ -55,10 +86,12 @@ router.post('/users', requireAuth, requireRole('SuperAdmin'), async (req: Reques
        RETURNING id, email, full_name, role, is_active, created_at`,
       [email.toLowerCase().trim(), hash, full_name, role, req.admin!.id]
     );
+    const ip = getIp(req);
+    logAuth('USER_CREATED', email, ip, `by=${req.admin!.email} role=${role}`);
     res.status(201).json(result.rows[0]);
   } catch (err: any) {
     if (err.code === '23505') return res.status(409).json({ error: 'Email déjà utilisé' });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -71,7 +104,7 @@ router.get('/users', requireAuth, requireRole('SuperAdmin'), async (_req: Reques
     );
     res.json(result.rows);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -79,6 +112,36 @@ router.get('/users', requireAuth, requireRole('SuperAdmin'), async (_req: Reques
 router.patch('/users/:id', requireAuth, requireRole('SuperAdmin'), async (req: Request, res: Response) => {
   const { id } = req.params;
   const { role, is_active, full_name } = req.body;
+
+  // Empêcher la modification d'un compte de même niveau ou supérieur (hors soi-même)
+  if (req.admin!.id !== id) {
+    try {
+      const targetResult = await pool.query('SELECT role FROM admin_users WHERE id = $1', [id]);
+      const target = targetResult.rows[0];
+      if (!target) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+      const requesterLevel = ROLE_LEVEL[req.admin!.role] ?? 0;
+      const targetLevel = ROLE_LEVEL[target.role] ?? 0;
+      if (targetLevel >= requesterLevel) {
+        return res.status(403).json({ error: 'Impossible de modifier un utilisateur de niveau supérieur ou égal au vôtre' });
+      }
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erreur serveur' });
+    }
+  }
+
+  // Valider le nouveau rôle si fourni
+  if (role !== undefined) {
+    const validRoles = ['SuperAdmin', 'Admin', 'GerantAudio', 'GerantXassida', 'Moderateur'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ error: `Rôle invalide. Valeurs: ${validRoles.join(', ')}` });
+    }
+    const requesterLevel = ROLE_LEVEL[req.admin!.role] ?? 0;
+    const newTargetLevel = ROLE_LEVEL[role] ?? 0;
+    if (newTargetLevel >= requesterLevel) {
+      return res.status(403).json({ error: 'Impossible d\'attribuer un rôle de niveau supérieur ou égal au vôtre' });
+    }
+  }
+
   try {
     const fields: string[] = [];
     const values: any[] = [];
@@ -94,9 +157,11 @@ router.patch('/users/:id', requireAuth, requireRole('SuperAdmin'), async (req: R
       values
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    const ip = getIp(req);
+    logAuth('USER_UPDATED', result.rows[0].email, ip, `by=${req.admin!.email}`);
     res.json(result.rows[0]);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -110,12 +175,29 @@ router.patch('/users/:id/password', requireAuth, async (req: Request, res: Respo
   if (req.admin!.role !== 'SuperAdmin' && req.admin!.id !== id) {
     return res.status(403).json({ error: 'Non autorisé' });
   }
+  // SuperAdmin ne peut pas changer le mot de passe d'un autre SuperAdmin
+  if (req.admin!.id !== id) {
+    try {
+      const targetResult = await pool.query('SELECT role FROM admin_users WHERE id = $1', [id]);
+      const target = targetResult.rows[0];
+      if (!target) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+      const requesterLevel = ROLE_LEVEL[req.admin!.role] ?? 0;
+      const targetLevel = ROLE_LEVEL[target.role] ?? 0;
+      if (targetLevel >= requesterLevel) {
+        return res.status(403).json({ error: 'Impossible de modifier le mot de passe d\'un utilisateur de niveau supérieur ou égal' });
+      }
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erreur serveur' });
+    }
+  }
   try {
     const hash = await bcrypt.hash(password, 12);
     await pool.query('UPDATE admin_users SET password_hash = $1 WHERE id = $2', [hash, id]);
+    const ip = getIp(req);
+    logAuth('PASSWORD_CHANGED', req.admin!.email, ip, `target_id=${id}`);
     res.json({ message: 'Mot de passe mis à jour' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -125,15 +207,25 @@ router.delete('/users/:id', requireAuth, requireRole('SuperAdmin'), async (req: 
   if (req.admin!.id === id) {
     return res.status(400).json({ error: 'Impossible de supprimer votre propre compte' });
   }
+  // Empêcher la suppression d'un utilisateur de même niveau ou supérieur
   try {
+    const targetResult = await pool.query('SELECT role, email FROM admin_users WHERE id = $1', [id]);
+    const target = targetResult.rows[0];
+    if (!target) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    const requesterLevel = ROLE_LEVEL[req.admin!.role] ?? 0;
+    const targetLevel = ROLE_LEVEL[target.role] ?? 0;
+    if (targetLevel >= requesterLevel) {
+      return res.status(403).json({ error: 'Impossible de supprimer un utilisateur de niveau supérieur ou égal au vôtre' });
+    }
     const result = await pool.query(
       'DELETE FROM admin_users WHERE id = $1 RETURNING id, email, full_name',
       [id]
     );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    const ip = getIp(req);
+    logAuth('USER_DELETED', target.email, ip, `by=${req.admin!.email}`);
     res.json({ message: 'Utilisateur supprimé', user: result.rows[0] });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 

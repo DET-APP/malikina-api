@@ -46,5 +46,5 @@ export function requireRole(...roles: AdminRole[]) {
 }
 
 export function signToken(user: AdminUser): string {
-  return jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(user, JWT_SECRET, { expiresIn: '30m' });
 }

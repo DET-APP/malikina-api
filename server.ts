@@ -1,5 +1,6 @@
 import EXPRESS from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
@@ -9,6 +10,7 @@ import { xassidaRoutes } from './routes/xassidas.js';
 import { authorRoutes } from './routes/authors.js';
 import categoriesRoutes from './routes/categories.js';
 import { authRoutes } from './routes/auth.js';
+import { globalLimiter } from './middleware/rateLimiter.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -278,11 +280,11 @@ const openApiSpec = swaggerJsdoc({
 });
 
 // Middleware
-// Si en production, accepter toutes les origins pour debug
-const allowAllOrigins = process.env.NODE_ENV === 'production';
+app.use(helmet());
+
 const frontendUrl = process.env.FRONTEND_URL || '';
 const defaultOrigins = ['http://localhost:8080', 'http://localhost:5173', 'https://malikina.vercel.app'];
-const allowedOrigins = frontendUrl 
+const allowedOrigins = frontendUrl
   ? frontendUrl.split(',').map(s => s.trim())
   : defaultOrigins;
 
@@ -290,14 +292,13 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (curl, Postman, same-origin)
     if (!origin) return callback(null, true);
-    // In production, allow all origins for now
-    if (allowAllOrigins) return callback(null, true);
-    // Check against allowed origins
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true
 }));
+
+app.use(globalLimiter);
 app.use(EXPRESS.json({ limit: '50mb' }));
 app.use(EXPRESS.urlencoded({ limit: '50mb', extended: true }));
 
