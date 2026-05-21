@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: malikina-db
     environment:
       POSTGRES_USER: ${DB_USER:-malikina}
@@ -37,6 +37,8 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       OCR_SPACE_API_KEY: ${OCR_SPACE_API_KEY:-}
       ADMIN_SECRET: ${ADMIN_SECRET:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      HF_API_KEY: ${HF_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

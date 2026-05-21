@@ -10,6 +10,7 @@ import { xassidaRoutes } from './routes/xassidas.js';
 import { authorRoutes } from './routes/authors.js';
 import categoriesRoutes from './routes/categories.js';
 import { authRoutes } from './routes/auth.js';
+import { chatRoutes } from './routes/chat.js';
 import { globalLimiter } from './middleware/rateLimiter.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -339,6 +340,7 @@ if (process.env.SCRAPER_ENABLED === 'true') {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/xassidas', xassidaRoutes);
 app.use('/api/authors', authorRoutes);
 app.use('/api/categories', categoriesRoutes);
