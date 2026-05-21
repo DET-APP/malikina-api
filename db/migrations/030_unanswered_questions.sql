@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS unanswered_questions (
   answered    BOOLEAN DEFAULT FALSE,
   answered_at TIMESTAMP,
   answer      TEXT,
-  chunk_id    INTEGER REFERENCES knowledge_chunks(id) ON DELETE SET NULL
+  chunk_id    UUID REFERENCES knowledge_chunks(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_unanswered_questions_answered ON unanswered_questions(answered);
