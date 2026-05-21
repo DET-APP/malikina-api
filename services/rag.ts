@@ -12,7 +12,17 @@ export interface RagChunk {
 
 // Recherche full-text (fonctionne sans embeddings)
 async function searchFullText(query: string, limit: number): Promise<RagChunk[]> {
-  const result = await pool.query(
+  // Recherche title ILIKE en priorité (capture les termes arabes/propres mal tokenisés)
+  const titleResult = await pool.query(
+    `SELECT id, source, title, content, language, metadata, 0.95 AS similarity
+     FROM knowledge_chunks
+     WHERE title ILIKE $1 OR content ILIKE $1
+     ORDER BY CASE WHEN title ILIKE $1 THEN 0 ELSE 1 END
+     LIMIT $2`,
+    [`%${query}%`, limit]
+  );
+
+  const ftResult = await pool.query(
     `SELECT id, source, title, content, language, metadata,
             ts_rank(to_tsvector('simple', content || ' ' || COALESCE(title, '')),
                     plainto_tsquery('simple', $1)) AS similarity
@@ -24,8 +34,15 @@ async function searchFullText(query: string, limit: number): Promise<RagChunk[]>
     [query, limit]
   );
 
-  // Si pas de résultats full-text, retourne les plus récents comme fallback
-  if (result.rows.length === 0) {
+  // Fusionner : titre en priorité, puis full-text, dédupliquer
+  const seen = new Set<string>();
+  const merged: RagChunk[] = [];
+  for (const r of [...titleResult.rows, ...ftResult.rows]) {
+    if (!seen.has(r.id)) { seen.add(r.id); merged.push(r); }
+  }
+
+  // Si aucun résultat, retourner les plus récents comme fallback
+  if (merged.length === 0) {
     const fallback = await pool.query(
       `SELECT id, source, title, content, language, metadata, 0.1 AS similarity
        FROM knowledge_chunks
@@ -35,7 +52,7 @@ async function searchFullText(query: string, limit: number): Promise<RagChunk[]>
     );
     return fallback.rows;
   }
-  return result.rows;
+  return merged.slice(0, limit);
 }
 
 // Recherche vectorielle (nécessite embeddings)
